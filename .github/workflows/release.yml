@@ -1,0 +1,201 @@
+name: Release & Publish Pages
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and publish (e.g. v0.1.0)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "release-${{ github.ref }}"
+  cancel-in-progress: false
+
+jobs:
+  build-macos:
+    name: Build, Sign & Notarize macOS DMG
+    runs-on: macos-14
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag is on main branch
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::Tagged commit ${GITHUB_SHA} is not on the main branch."
+            exit 1
+          fi
+
+      - name: Resolve release tag and version
+        id: meta
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [ -n "${INPUT_TAG}" ]; then
+            TAG="${INPUT_TAG}"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="v$(node -p "require('./package.json').version")"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Cache bundled ML models
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/models
+          key: talksify-models-${{ hashFiles('scripts/download-models.sh') }}
+
+      - name: Ensure bundled ML models are present
+        run: ./scripts/download-models.sh
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare Apple App Store Connect API key (if provided)
+        id: notary-key
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          if [ -n "${APPLE_API_KEY}" ] && [ -n "${APPLE_API_PRIVATE_KEY}" ]; then
+            KEY_PATH="${RUNNER_TEMP}/AuthKey_${APPLE_API_KEY}.p8"
+            printf '%s\n' "${APPLE_API_PRIVATE_KEY}" > "${KEY_PATH}"
+            echo "apple_api_key_path=${KEY_PATH}" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Build signed and notarized DMG
+        env:
+          CI: "true"
+          VERSION: ${{ steps.meta.outputs.version }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PATH: ${{ steps.notary-key.outputs.apple_api_key_path }}
+        run: |
+          SIGN_ID="${APPLE_SIGNING_IDENTITY:--}"
+          if [ "${SIGN_ID}" = "-" ]; then
+            echo "::warning::APPLE_SIGNING_IDENTITY secret not set; building with ad-hoc signature."
+          fi
+
+          OVERRIDE_CONFIG=$(jq -cn \
+            --arg version "${VERSION}" \
+            --arg sign_id "${SIGN_ID}" \
+            '{version: $version, bundle: {macOS: {signingIdentity: $sign_id}}}')
+
+          pnpm tauri build \
+            --target aarch64-apple-darwin \
+            --bundles dmg \
+            --config "${OVERRIDE_CONFIG}"
+
+      - name: Collect and verify DMG artifacts
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          mkdir -p release-assets
+          DMG_PATH=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name "*.dmg" -print -quit)
+          if [ -z "${DMG_PATH}" ] || [ ! -f "${DMG_PATH}" ]; then
+            echo "::error::No DMG found in bundle output directory."
+            exit 1
+          fi
+
+          if [ -n "${APPLE_SIGNING_IDENTITY}" ]; then
+            codesign --verify --verbose=2 "${DMG_PATH}"
+            xcrun stapler validate "${DMG_PATH}"
+          fi
+
+          cp "${DMG_PATH}" "release-assets/Talksify.dmg"
+          cp "${DMG_PATH}" "release-assets/Talksify_${VERSION}_aarch64.dmg"
+          (
+            cd release-assets
+            shasum -a 256 "Talksify.dmg" "Talksify_${VERSION}_aarch64.dmg" > SHA256SUMS.txt
+          )
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: Talksify ${{ steps.meta.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            release-assets/Talksify.dmg
+            release-assets/Talksify_${{ steps.meta.outputs.version }}_aarch64.dmg
+            release-assets/SHA256SUMS.txt
+
+  deploy-pages:
+    name: Deploy GitHub Pages
+    needs: build-macos
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare static site with release download link
+        env:
+          TAG: ${{ needs.build-macos.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          cp src-tauri/icons/128x128@2x.png site/icon.png
+          DMG_URL="https://github.com/${REPO}/releases/download/${TAG}/Talksify.dmg"
+          sed -i "s|https://github.com/dejang/talksify/releases/latest/download/Talksify.dmg|${DMG_URL}|g" site/index.html
+          sed -i "s|https://github.com/dejang/talksify|https://github.com/${REPO}|g" site/index.html
+          sed -i "s|>v0.1.0<|>${TAG}<|g" site/index.html
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

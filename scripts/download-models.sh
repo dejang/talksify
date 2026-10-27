@@ -3,8 +3,8 @@
 # Run once after cloning the repo.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-MODELS_DIR="$SCRIPT_DIR/src-tauri/models"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+MODELS_DIR="$ROOT_DIR/src-tauri/models"
 
 mkdir -p "$MODELS_DIR/stt" "$MODELS_DIR/qwen-0.6b"
 
