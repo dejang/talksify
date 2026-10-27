@@ -228,11 +228,12 @@ impl Transcriber {
         };
 
         log::info!(
-            "[transcriber] raw transcript: {} sentences",
-            raw.sentences.len()
+            "[transcriber] raw transcript ({} sentences): {:?}",
+            raw.sentences.len(),
+            raw.sentences
         );
         let cleaned = self.llm.clean_transcript(&raw);
-        log::trace!("[transcriber] cleaned: {cleaned:?}");
+        log::info!("[transcriber] cleaned: {cleaned:?}");
         Ok(cleaned)
     }
 
