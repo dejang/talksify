@@ -107,7 +107,6 @@ pub fn run() {
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Debug)
-                .level_for("enigo", log::LevelFilter::Info)
                 .build(),
         )
         .plugin(
@@ -124,7 +123,8 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            if !TextInjector::request_accessibility() {
+            let injector = TextInjector::new();
+            if !injector.request_accessibility() {
                 log::warn!("waiting for user to grant accessibility permission");
             }
 
@@ -143,7 +143,7 @@ pub fn run() {
 
             let app_state = AppState {
                 transcriber: Mutex::new(transcriber),
-                injector: TextInjector::new(),
+                injector,
                 state: Mutex::new(event_handler::DictationState::Idle),
                 overlay_margin: 24.0,
             };
