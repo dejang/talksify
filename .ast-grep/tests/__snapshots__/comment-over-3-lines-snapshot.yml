@@ -1,0 +1,522 @@
+id: comment-over-3-lines
+snapshots:
+  "/* one\n   two\n   three\n   four */\nfn probe() {}\n":
+    labels:
+    - source: |-
+        /* one
+           two
+           three
+           four */
+      style: primary
+      start: 0
+      end: 33
+  "/* one\n   two */\n// three\n// four\nfn probe() {}\n":
+    labels:
+    - source: |-
+        /* one
+           two */
+      style: primary
+      start: 0
+      end: 16
+    - source: // four
+      style: secondary
+      start: 26
+      end: 33
+    - source: // three
+      style: secondary
+      start: 17
+      end: 25
+  "/*! one\n    two\n    three\n    four */\nuse std::io;\n":
+    labels:
+    - source: |-
+        /*! one
+            two
+            three
+            four */
+      style: primary
+      start: 0
+      end: 37
+  "/** one\n    two\n    three\n    four */\nfn probe() {}\n":
+    labels:
+    - source: |-
+        /** one
+            two
+            three
+            four */
+      style: primary
+      start: 0
+      end: 37
+  "// one\n// two\n/* three\n   four */\nfn probe() {}\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 0
+      end: 6
+    - source: |-
+        /* three
+           four */
+      style: secondary
+      start: 14
+      end: 33
+    - source: // two
+      style: secondary
+      start: 7
+      end: 13
+  "// one\n// two\n// three\n\n// four\nfn probe() {}\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 0
+      end: 6
+    - source: // four
+      style: secondary
+      start: 24
+      end: 31
+    - source: // three
+      style: secondary
+      start: 14
+      end: 22
+    - source: // two
+      style: secondary
+      start: 7
+      end: 13
+  "// one\n/// two\n/* three */\n//! four\nfn probe() {}\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 0
+      end: 6
+    - source: |
+        //! four
+      style: secondary
+      start: 27
+      end: 36
+    - source: /* three */
+      style: secondary
+      start: 15
+      end: 26
+    - source: |
+        /// two
+      style: secondary
+      start: 7
+      end: 15
+  "//! one\n//! two\n//! three\n//! four\nuse std::io;\n":
+    labels:
+    - source: |
+        //! one
+      style: primary
+      start: 0
+      end: 8
+    - source: |
+        //! four
+      style: secondary
+      start: 26
+      end: 35
+    - source: |
+        //! three
+      style: secondary
+      start: 16
+      end: 26
+    - source: |
+        //! two
+      style: secondary
+      start: 8
+      end: 16
+  "/// One line of prose and a doctest.\n///\n/// ```\n/// let _ = 1;\n/// ```\nfn probe() {}\n":
+    labels:
+    - source: |
+        /// One line of prose and a doctest.
+      style: primary
+      start: 0
+      end: 37
+    - source: |
+        /// let _ = 1;
+      style: secondary
+      start: 49
+      end: 64
+    - source: |
+        /// ```
+      style: secondary
+      start: 41
+      end: 49
+    - source: |
+        ///
+      style: secondary
+      start: 37
+      end: 41
+  "/// One line of prose.\n///\n/// # Errors\n/// Fails on empty input.\nfn probe() {}\n":
+    labels:
+    - source: |
+        /// One line of prose.
+      style: primary
+      start: 0
+      end: 23
+    - source: |
+        /// Fails on empty input.
+      style: secondary
+      start: 40
+      end: 66
+    - source: |
+        /// # Errors
+      style: secondary
+      start: 27
+      end: 40
+    - source: |
+        ///
+      style: secondary
+      start: 23
+      end: 27
+  "/// one\n/// two\n#[derive(Debug)]\n#[allow(dead_code)]\n// three\n// four\nstruct Probe;\n":
+    labels:
+    - source: |
+        /// one
+      style: primary
+      start: 0
+      end: 8
+    - source: // four
+      style: secondary
+      start: 62
+      end: 69
+    - source: // three
+      style: secondary
+      start: 53
+      end: 61
+    - source: "#[allow(dead_code)]"
+      style: secondary
+      start: 33
+      end: 52
+    - source: "#[derive(Debug)]"
+      style: secondary
+      start: 16
+      end: 32
+    - source: |
+        /// two
+      style: secondary
+      start: 8
+      end: 16
+  "/// one\n/// two\n/// three\n/// four\nfn probe() {}\n":
+    labels:
+    - source: |
+        /// one
+      style: primary
+      start: 0
+      end: 8
+    - source: |
+        /// four
+      style: secondary
+      start: 26
+      end: 35
+    - source: |
+        /// three
+      style: secondary
+      start: 16
+      end: 26
+    - source: |
+        /// two
+      style: secondary
+      start: 8
+      end: 16
+  "fn probe() -> Probe {\n    Probe {\n        // one\n        // two\n        #[cfg(test)]\n        // three\n        // four\n        a: 1,\n    }\n}\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 42
+      end: 48
+    - source: "#[cfg(test)]"
+      style: secondary
+      start: 72
+      end: 84
+    - source: // four
+      style: secondary
+      start: 110
+      end: 117
+    - source: // three
+      style: secondary
+      start: 93
+      end: 101
+    - source: |-
+        #[cfg(test)]
+                // three
+                // four
+                a: 1
+      style: secondary
+      start: 72
+      end: 130
+    - source: // two
+      style: secondary
+      start: 57
+      end: 63
+  "fn probe() {\n    // one\n    // two\n    // three\n    // four\n    // five\n    let _ = 1;\n}\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 17
+      end: 23
+    - source: // four
+      style: secondary
+      start: 52
+      end: 59
+    - source: // three
+      style: secondary
+      start: 39
+      end: 47
+    - source: // two
+      style: secondary
+      start: 28
+      end: 34
+  "fn probe() {\n    // one\n    // two\n    // three\n    // four\n    let _ = 1;\n}\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 17
+      end: 23
+    - source: // four
+      style: secondary
+      start: 52
+      end: 59
+    - source: // three
+      style: secondary
+      start: 39
+      end: 47
+    - source: // two
+      style: secondary
+      start: 28
+      end: 34
+  "fn probe() {\n    // plain one\n    // plain two\n    /// a doc line does not split a run inside a body\n    // plain three\n    // plain four\n    let _ = 1;\n}\n":
+    labels:
+    - source: // plain one
+      style: primary
+      start: 17
+      end: 29
+    - source: |-
+        fn probe() {
+            // plain one
+            // plain two
+            /// a doc line does not split a run inside a body
+            // plain three
+            // plain four
+            let _ = 1;
+        }
+      style: secondary
+      start: 0
+      end: 154
+    - source: // plain three
+      style: secondary
+      start: 105
+      end: 119
+    - source: |
+        /// a doc line does not split a run inside a body
+      style: secondary
+      start: 51
+      end: 101
+    - source: // plain two
+      style: secondary
+      start: 34
+      end: 46
+  "fn probe() {\n    /// four doc lines inside a body document no API, so they\n    /// count toward the limit like any other comment line and\n    /// a run of four of them is reported here\n    /// as this fourth line completes\n    let _ = 1;\n}\n":
+    labels:
+    - source: |
+        /// four doc lines inside a body document no API, so they
+      style: primary
+      start: 17
+      end: 75
+    - source: |-
+        fn probe() {
+            /// four doc lines inside a body document no API, so they
+            /// count toward the limit like any other comment line and
+            /// a run of four of them is reported here
+            /// as this fourth line completes
+            let _ = 1;
+        }
+      style: secondary
+      start: 0
+      end: 239
+    - source: |
+        /// as this fourth line completes
+      style: secondary
+      start: 189
+      end: 223
+    - source: |
+        /// a run of four of them is reported here
+      style: secondary
+      start: 142
+      end: 185
+    - source: |
+        /// count toward the limit like any other comment line and
+      style: secondary
+      start: 79
+      end: 138
+  "fn probe() {\n    let _ = [\n        1 // one\n        // two\n        ,\n        // three\n        // four\n    ];\n}\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 37
+      end: 43
+    - source: // four
+      style: secondary
+      start: 94
+      end: 101
+    - source: // three
+      style: secondary
+      start: 77
+      end: 85
+    - source: ","
+      style: secondary
+      start: 67
+      end: 68
+    - source: // two
+      style: secondary
+      start: 52
+      end: 58
+  "fn probe(x: u8) {\n    match x {\n        // one\n        // two\n        #[cfg(test)]\n        // three\n        // four\n        1 => {}\n        _ => {}\n    }\n}\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 40
+      end: 46
+    - source: "#[cfg(test)]"
+      style: secondary
+      start: 70
+      end: 82
+    - source: // four
+      style: secondary
+      start: 108
+      end: 115
+    - source: // three
+      style: secondary
+      start: 91
+      end: 99
+    - source: |-
+        #[cfg(test)]
+                // three
+                // four
+                1 => {}
+      style: secondary
+      start: 70
+      end: 131
+    - source: // two
+      style: secondary
+      start: 55
+      end: 61
+  "impl Probe {\n    /// one\n    /// two\n    /// three\n    /// four\n    fn probe(&self) {}\n}\n":
+    labels:
+    - source: |
+        /// one
+      style: primary
+      start: 17
+      end: 25
+    - source: |
+        /// four
+      style: secondary
+      start: 55
+      end: 64
+    - source: |
+        /// three
+      style: secondary
+      start: 41
+      end: 51
+    - source: |
+        /// two
+      style: secondary
+      start: 29
+      end: 37
+  "macro_rules! probe {\n    (\n        // one\n        // two\n        #[cfg(test)]\n        // three\n        // four\n        $x:ident\n    ) => {};\n}\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 35
+      end: 41
+    - source: '#'
+      style: secondary
+      start: 65
+      end: 66
+    - source: // four
+      style: secondary
+      start: 103
+      end: 110
+    - source: // three
+      style: secondary
+      start: 86
+      end: 94
+    - source: "[cfg(test)]"
+      style: secondary
+      start: 66
+      end: 77
+    - source: '#'
+      style: secondary
+      start: 65
+      end: 66
+    - source: // two
+      style: secondary
+      start: 50
+      end: 56
+  "macro_rules! probe {\n    ($(#[$m:meta])* $n:ident) => {\n        // one\n        // two\n        $(#[$m])*\n        // three\n        // four\n        struct $n;\n    };\n}\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 64
+      end: 70
+    - source: // four
+      style: secondary
+      start: 129
+      end: 136
+    - source: // three
+      style: secondary
+      start: 112
+      end: 120
+    - source: $(#[$m])*
+      style: secondary
+      start: 94
+      end: 103
+    - source: // two
+      style: secondary
+      start: 79
+      end: 85
+  "macro_rules! probe {\n    () => {\n        // one\n        // two\n        #[derive(Debug)]\n        // three\n        // four\n        struct Probe;\n    };\n}\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 41
+      end: 47
+    - source: '#'
+      style: secondary
+      start: 71
+      end: 72
+    - source: // four
+      style: secondary
+      start: 113
+      end: 120
+    - source: // three
+      style: secondary
+      start: 96
+      end: 104
+    - source: "[derive(Debug)]"
+      style: secondary
+      start: 72
+      end: 87
+    - source: '#'
+      style: secondary
+      start: 71
+      end: 72
+    - source: // two
+      style: secondary
+      start: 56
+      end: 62
+  "struct Probe {\n    a: u8, // one\n    // two\n    // three\n    // four\n    b: u8,\n}\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 26
+      end: 32
+    - source: // four
+      style: secondary
+      start: 61
+      end: 68
+    - source: // three
+      style: secondary
+      start: 48
+      end: 56
+    - source: // two
+      style: secondary
+      start: 37
+      end: 43

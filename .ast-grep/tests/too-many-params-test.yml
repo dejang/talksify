@@ -1,0 +1,31 @@
+id: too-many-params
+valid:
+  - |
+    impl Solver {
+        fn step(&mut self, gradient: &[f64], scale: f64) -> bool {
+            !gradient.is_empty() && scale > 0.0
+        }
+    }
+invalid:
+  - |
+    fn armijo_backtrack(
+        direction: &mut [f64],
+        prior: &[f64],
+        profiles: &[Vec<f64>],
+        accepted: usize,
+        lambda: f64,
+        learned: &[usize],
+    ) -> bool {
+        accepted > 0 && !direction.is_empty() && !prior.is_empty() && !profiles.is_empty() && lambda > 0.0 && !learned.is_empty()
+    }
+  - |
+    fn compile_with_prior(
+        accepted_rows: &[usize],
+        direction: &mut Vec<f64>,
+        original_means: &mut Vec<f32>,
+    ) {
+        if accepted_rows.is_empty() {
+            direction.clear();
+            original_means.clear();
+        }
+    }

@@ -1,0 +1,77 @@
+id: linear-scan-in-loop
+snapshots:
+  "fn feature_dimension(names: &[String], target: &str) -> Option<usize> {\n    names.iter().position(|name| name == target)\n}\n\nfn resolve(names: &[String], queries: &[&str]) {\n    for query in queries {\n        let _ = feature_dimension(names, query);\n    }\n}\n":
+    labels:
+    - source: feature_dimension(names, query)
+      style: primary
+      start: 216
+      end: 247
+    - source: feature_dimension
+      style: secondary
+      start: 216
+      end: 233
+    - source: feature_dimension
+      style: secondary
+      start: 3
+      end: 20
+    - source: names.iter().position(|name| name == target)
+      style: secondary
+      start: 76
+      end: 120
+    - source: names.iter().position(|name| name == target)
+      style: secondary
+      start: 76
+      end: 120
+    - source: |-
+        fn feature_dimension(names: &[String], target: &str) -> Option<usize> {
+            names.iter().position(|name| name == target)
+        }
+      style: secondary
+      start: 0
+      end: 122
+    - source: |
+        fn feature_dimension(names: &[String], target: &str) -> Option<usize> {
+            names.iter().position(|name| name == target)
+        }
+        
+        fn resolve(names: &[String], queries: &[&str]) {
+            for query in queries {
+                let _ = feature_dimension(names, query);
+            }
+        }
+      style: secondary
+      start: 0
+      end: 257
+    - source: |-
+        for query in queries {
+                let _ = feature_dimension(names, query);
+            }
+      style: secondary
+      start: 177
+      end: 254
+  "fn probe(rows: &[Row], others: &[Row]) {\n    for row in rows {\n        let _ = others.iter().find(|other| other.id == row.id);\n    }\n}\n":
+    labels:
+    - source: others.iter().find(|other| other.id == row.id)
+      style: primary
+      start: 79
+      end: 125
+    - source: |-
+        for row in rows {
+                let _ = others.iter().find(|other| other.id == row.id);
+            }
+      style: secondary
+      start: 45
+      end: 132
+  "fn probe(rows: &[Row], others: &[Row]) {\n    while let Some(row) = rows.first() {\n        let _ = others.iter().position(|other| other.id == row.id);\n    }\n}\n":
+    labels:
+    - source: others.iter().position(|other| other.id == row.id)
+      style: primary
+      start: 98
+      end: 148
+    - source: |-
+        while let Some(row) = rows.first() {
+                let _ = others.iter().position(|other| other.id == row.id);
+            }
+      style: secondary
+      start: 45
+      end: 155

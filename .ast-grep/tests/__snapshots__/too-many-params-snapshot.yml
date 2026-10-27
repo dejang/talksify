@@ -1,0 +1,90 @@
+id: too-many-params
+snapshots:
+  "fn armijo_backtrack(\n    direction: &mut [f64],\n    prior: &[f64],\n    profiles: &[Vec<f64>],\n    accepted: usize,\n    lambda: f64,\n    learned: &[usize],\n) -> bool {\n    accepted > 0 && !direction.is_empty() && !prior.is_empty() && !profiles.is_empty() && lambda > 0.0 && !learned.is_empty()\n}\n":
+    labels:
+    - source: |-
+        fn armijo_backtrack(
+            direction: &mut [f64],
+            prior: &[f64],
+            profiles: &[Vec<f64>],
+            accepted: usize,
+            lambda: f64,
+            learned: &[usize],
+        ) -> bool {
+            accepted > 0 && !direction.is_empty() && !prior.is_empty() && !profiles.is_empty() && lambda > 0.0 && !learned.is_empty()
+        }
+      style: primary
+      start: 0
+      end: 294
+    - source: "direction: &mut [f64]"
+      style: secondary
+      start: 25
+      end: 46
+    - source: "prior: &[f64]"
+      style: secondary
+      start: 52
+      end: 65
+    - source: "profiles: &[Vec<f64>]"
+      style: secondary
+      start: 71
+      end: 92
+    - source: "accepted: usize"
+      style: secondary
+      start: 98
+      end: 113
+    - source: "lambda: f64"
+      style: secondary
+      start: 119
+      end: 130
+    - source: "learned: &[usize]"
+      style: secondary
+      start: 136
+      end: 153
+    - source: "learned: &[usize]"
+      style: secondary
+      start: 136
+      end: 153
+  "fn compile_with_prior(\n    accepted_rows: &[usize],\n    direction: &mut Vec<f64>,\n    original_means: &mut Vec<f32>,\n) {\n    if accepted_rows.is_empty() {\n        direction.clear();\n        original_means.clear();\n    }\n}\n":
+    labels:
+    - source: |-
+        fn compile_with_prior(
+            accepted_rows: &[usize],
+            direction: &mut Vec<f64>,
+            original_means: &mut Vec<f32>,
+        ) {
+            if accepted_rows.is_empty() {
+                direction.clear();
+                original_means.clear();
+            }
+        }
+      style: primary
+      start: 0
+      end: 221
+    - source: mut
+      style: secondary
+      start: 103
+      end: 106
+    - source: "&mut Vec<f32>"
+      style: secondary
+      start: 102
+      end: 115
+    - source: mut
+      style: secondary
+      start: 68
+      end: 71
+    - source: "&mut Vec<f64>"
+      style: secondary
+      start: 67
+      end: 80
+    - source: "direction: &mut Vec<f64>"
+      style: secondary
+      start: 56
+      end: 80
+    - source: "original_means: &mut Vec<f32>"
+      style: secondary
+      start: 86
+      end: 115
+    - source: "original_means: &mut Vec<f32>"
+      style: secondary
+      start: 86
+      end: 115

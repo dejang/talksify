@@ -1,0 +1,33 @@
+id: const-fn-config
+valid:
+  - |
+    struct Config {
+        primary_weight: f32,
+    }
+
+    impl Config {
+        const fn primary_weight(&self) -> f32 {
+            self.primary_weight
+        }
+    }
+  - |
+    const fn scale(value: f32) -> f32 {
+        value * 2.0
+    }
+  - |
+    fn default_config() -> Config {
+        Config::new(1.0)
+    }
+invalid:
+  - |
+    const fn primary_weight() -> f32 {
+        1.0
+    }
+  - |
+    const fn stop_words() -> &'static [&'static str] {
+        &["a", "the"]
+    }
+  - |
+    fn seed() -> &'static str {
+        "/music/seed.wav"
+    }

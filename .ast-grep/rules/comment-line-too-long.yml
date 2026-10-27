@@ -1,0 +1,12 @@
+id: comment-line-too-long
+language: rust
+severity: error
+message: "Comment line is longer than 96 characters; wrap it or move the reasoning to the module outline (apply-style: Comments and API documentation)."
+# Without a width cap, the line-count rules could be beaten by one long line. Width is
+# counted from the comment's first non-space character, for every line of a block comment.
+rule:
+  any:
+    - kind: line_comment
+      regex: '^//[^\r\n]{95,}'
+    - kind: block_comment
+      regex: '(^|\n)[ \t]*[^ \t\n][^\r\n]{96,}'

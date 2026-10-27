@@ -1,0 +1,22 @@
+id: allow-unused-or-dead-code
+snapshots:
+  "#[allow(dead_code)]\nfn probe(a: u32) -> u32 {\n    a\n}\n":
+    labels:
+    - source: "#[allow(dead_code)]"
+      style: primary
+      start: 0
+      end: 19
+    - source: allow(dead_code)
+      style: secondary
+      start: 2
+      end: 18
+  "fn probe() {\n    #[allow(unused_variables)]\n    let a = 1;\n}\n":
+    labels:
+    - source: "#[allow(unused_variables)]"
+      style: primary
+      start: 17
+      end: 43
+    - source: allow(unused_variables)
+      style: secondary
+      start: 19
+      end: 42

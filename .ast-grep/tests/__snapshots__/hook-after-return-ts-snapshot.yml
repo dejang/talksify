@@ -1,0 +1,126 @@
+id: hook-after-return-ts
+snapshots:
+  "export function HookBelowABareReturn({ open }) {\n  if (open) return null;\n  const [n] = React.useState(0);\n  return n;\n}\n":
+    labels:
+    - source: const [n] = React.useState(0);
+      style: primary
+      start: 76
+      end: 106
+    - source: React.useState
+      style: secondary
+      start: 88
+      end: 102
+    - source: React.useState(0)
+      style: secondary
+      start: 88
+      end: 105
+    - source: return null;
+      style: secondary
+      start: 61
+      end: 73
+    - source: if (open) return null;
+      style: secondary
+      start: 51
+      end: 73
+  "export function HookBelowAReturnInALoop({ rows }) {\n  for (const row of rows) {\n    if (row.bad) {\n      return null;\n    }\n  }\n  const [n] = React.useState(0);\n  return n;\n}\n":
+    labels:
+    - source: const [n] = React.useState(0);
+      style: primary
+      start: 130
+      end: 160
+    - source: React.useState
+      style: secondary
+      start: 142
+      end: 156
+    - source: React.useState(0)
+      style: secondary
+      start: 142
+      end: 159
+    - source: return null;
+      style: secondary
+      start: 105
+      end: 117
+    - source: |-
+        for (const row of rows) {
+            if (row.bad) {
+              return null;
+            }
+          }
+      style: secondary
+      start: 54
+      end: 127
+  "export function HookBelowAnEarlyReturn({ open }) {\n  const [n, setN] = React.useState(0);\n  if (!open) {\n    return null;\n  }\n  const m = React.useMemo(() => n + 1, [n]);\n  return m;\n}\n":
+    labels:
+    - source: const m = React.useMemo(() => n + 1, [n]);
+      style: primary
+      start: 128
+      end: 170
+    - source: React.useMemo
+      style: secondary
+      start: 138
+      end: 151
+    - source: React.useMemo(() => n + 1, [n])
+      style: secondary
+      start: 138
+      end: 169
+    - source: return null;
+      style: secondary
+      start: 109
+      end: 121
+    - source: |-
+        if (!open) {
+            return null;
+          }
+      style: secondary
+      start: 92
+      end: 125
+  "export function HookStatementBelowAnEarlyReturn({ open }) {\n  if (open) {\n    return null;\n  }\n  useThing();\n  return null;\n}\n":
+    labels:
+    - source: useThing();
+      style: primary
+      start: 97
+      end: 108
+    - source: useThing
+      style: secondary
+      start: 97
+      end: 105
+    - source: useThing()
+      style: secondary
+      start: 97
+      end: 107
+    - source: return null;
+      style: secondary
+      start: 78
+      end: 90
+    - source: |-
+        if (open) {
+            return null;
+          }
+      style: secondary
+      start: 62
+      end: 94
+  "export function VarHookBelowAnEarlyReturn({ open }) {\n  if (!open) {\n    return null;\n  }\n  var m = React.useMemo(() => 1, []);\n  return m;\n}\n":
+    labels:
+    - source: var m = React.useMemo(() => 1, []);
+      style: primary
+      start: 92
+      end: 127
+    - source: React.useMemo
+      style: secondary
+      start: 100
+      end: 113
+    - source: React.useMemo(() => 1, [])
+      style: secondary
+      start: 100
+      end: 126
+    - source: return null;
+      style: secondary
+      start: 73
+      end: 85
+    - source: |-
+        if (!open) {
+            return null;
+          }
+      style: secondary
+      start: 56
+      end: 89

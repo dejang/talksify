@@ -1,0 +1,35 @@
+id: no-fixed-layout-size
+language: rust
+severity: error
+message: "Size layout with Length::Fill or Length::FillPortion; never a fixed width or height (apply-style: UI layout)."
+rule:
+  any:
+    - pattern: Length::Fixed($N)
+    - all:
+        - pattern: $R.width($A)
+        - not:
+            has:
+              kind: arguments
+              regex: Length::Fill
+              stopBy: end
+        - has:
+            kind: arguments
+            has:
+              any:
+                - kind: integer_literal
+                - kind: float_literal
+              stopBy: end
+    - all:
+        - pattern: $R.height($A)
+        - not:
+            has:
+              kind: arguments
+              regex: Length::Fill
+              stopBy: end
+        - has:
+            kind: arguments
+            has:
+              any:
+                - kind: integer_literal
+                - kind: float_literal
+              stopBy: end

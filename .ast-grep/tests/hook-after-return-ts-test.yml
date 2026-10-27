@@ -1,0 +1,121 @@
+id: hook-after-return-ts
+valid:
+  - |
+    export function HooksRunBeforeTheReturn({ open }) {
+      const [n, setN] = React.useState(0);
+      const m = React.useMemo(() => n + 1, [n]);
+      React.useEffect(() => { setN(0); }, [open]);
+      if (!open) {
+        return null;
+      }
+      const label = `count ${m}`;
+      return label;
+    }
+  - |
+    export function AReturnInsideACallbackIsNotAnEarlyReturn({ rows }) {
+      const doubled = rows.map((r) => {
+        return r * 2;
+      });
+      const m = React.useMemo(() => doubled.length, [doubled]);
+      if (rows.length === 0) {
+        return null;
+      }
+      return m;
+    }
+  - |
+    export function NoEarlyReturnAtAll() {
+      const [n] = React.useState(0);
+      const total = useSum([n]);
+      return total;
+    }
+  - |
+    export function AChildComponentBelowTheReturn({ open }) {
+      if (!open) {
+        return null;
+      }
+      const Row = ({ id }) => {
+        const [hover] = React.useState(false);
+        return hover ? id : "";
+      };
+      return Row({ id: "a" });
+    }
+  - |
+    export function AGeneratorInsideALoopIsNotAnEarlyReturn({ items }) {
+      for (const item of items) {
+        function* generate() {
+          return item;
+        }
+        register(generate);
+      }
+      const [n] = React.useState(0);
+      return n;
+    }
+  - |
+    export function ARendererDefinedInALoop({ items }) {
+      for (const item of items) {
+        const render = () => {
+          if (!item.ok) {
+            return null;
+          }
+          return item.name;
+        };
+        register(item, render);
+      }
+      const [n] = React.useState(0);
+      return n;
+    }
+  - |
+    export function AFunctionInsideATryIsNotAnEarlyReturn({ flag }) {
+      try {
+        const label = function () {
+          return flag ? "on" : "off";
+        };
+        useLabel(label);
+      } catch (error) {
+        report(error);
+      }
+      const [n] = React.useState(0);
+      return n;
+    }
+invalid:
+  - |
+    export function VarHookBelowAnEarlyReturn({ open }) {
+      if (!open) {
+        return null;
+      }
+      var m = React.useMemo(() => 1, []);
+      return m;
+    }
+  - |
+    export function HookBelowAnEarlyReturn({ open }) {
+      const [n, setN] = React.useState(0);
+      if (!open) {
+        return null;
+      }
+      const m = React.useMemo(() => n + 1, [n]);
+      return m;
+    }
+  - |
+    export function HookStatementBelowAnEarlyReturn({ open }) {
+      if (open) {
+        return null;
+      }
+      useThing();
+      return null;
+    }
+  - |
+    export function HookBelowABareReturn({ open }) {
+      if (open) return null;
+      const [n] = React.useState(0);
+      return n;
+    }
+  - |
+    export function HookBelowAReturnInALoop({ rows }) {
+      for (const row of rows) {
+        if (row.bad) {
+          return null;
+        }
+      }
+      const [n] = React.useState(0);
+      return n;
+    }

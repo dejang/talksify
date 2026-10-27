@@ -1,0 +1,12 @@
+id: migration-sql
+valid:
+  - |
+    fn probe() {
+        let _ = "CREATE TABLE Tracks (id INTEGER PRIMARY KEY)";
+        let _ = "DROP TABLE IF EXISTS PlayableFTS";
+    }
+invalid:
+  - |
+    fn probe() {
+        let _ = "ALTER TABLE Tracks ADD COLUMN bpm REAL";
+    }

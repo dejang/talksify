@@ -1,0 +1,7 @@
+id: narrative-todo-comment
+language: rust
+severity: error
+message: "Remove the TODO/FIXME/HACK narration; fix it now or describe the code's own contract (apply-style: Comments and API documentation)."
+rule:
+  kind: line_comment
+  regex: '^//[^/!].*\b(TODO|FIXME|XXX|HACK)\b'

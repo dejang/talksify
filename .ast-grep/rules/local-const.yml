@@ -1,0 +1,9 @@
+id: local-const
+language: rust
+severity: error
+message: "Local constant: pass it as constructor configuration or reuse a library constant, and state the motivation (apply-style: Configuration and constants)."
+rule:
+  kind: const_item
+  inside:
+    kind: function_item
+    stopBy: end

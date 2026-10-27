@@ -1,0 +1,13 @@
+id: module-const
+language: rust
+severity: error
+message: "Module-level constant: behavioural values belong in constructor configuration or function arguments. If part of a larger module consider using OOP patterns instead of functional programming to have the module become a Struct/Class and be configurable via constructor arguments/configuration object or consider the builder pattern."
+rule:
+  kind: const_item
+  not:
+    inside:
+      any:
+        - kind: function_item
+        - kind: impl_item
+        - kind: trait_item
+      stopBy: end

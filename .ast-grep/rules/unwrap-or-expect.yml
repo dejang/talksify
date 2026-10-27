@@ -1,0 +1,19 @@
+id: unwrap-or-expect
+language: rust
+severity: error
+message: "Name the input that panics here, or propagate the error with context (review-change: Failure handling)."
+rule:
+  any:
+    - pattern: $E.unwrap()
+    - pattern: $E.expect($M)
+  not:
+    inside:
+      kind: mod_item
+      follows:
+        kind: attribute_item
+        has:
+          kind: attribute
+          regex: cfg\(test\)
+          stopBy: end
+        stopBy: end
+      stopBy: end

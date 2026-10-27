@@ -1,0 +1,20 @@
+id: unwrap-or-expect
+valid:
+  - |
+    #[cfg(test)]
+    mod probe_unit {
+        #[test]
+        fn t() {
+            let _ = open().unwrap();
+            let _ = run().expect("the fixture is present");
+        }
+    }
+invalid:
+  - |
+    fn probe(row: Option<u32>) -> u32 {
+        row.unwrap()
+    }
+  - |
+    fn probe() -> u32 {
+        read().expect("the store is open")
+    }

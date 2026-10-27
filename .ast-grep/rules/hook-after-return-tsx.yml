@@ -1,0 +1,62 @@
+id: hook-after-return-tsx
+language: tsx
+severity: error
+message: "Hook runs after an early return, so it is skipped on some renders and React throws on the next one (rules-of-hooks)."
+# A hook may only run where it runs on every render. oxlint's react/rules-of-hooks does not
+# report a hook placed below an early return, so the shape survives `pnpm lint` and crashes
+# the component on its first re-render. The rule reports a declaration or statement that
+# calls a `use*` function and is preceded, in the same block, by a return or by a control-flow
+# statement containing one. Both searches stop at a function boundary: a nested component that
+# hooks below its parent's return is the parent's JSX, not the parent's bug, and a renderer
+# defined inside a loop is not the component returning early.
+#
+# Known limitation, do not re-derive it: a hook nested in a block below the early return
+# (`if (flag) { const m = useMemo(…); … }`) has no preceding sibling at its own level, so
+# `follows` cannot see it. The rule also cannot tell a component from a plain function, so a
+# helper that returns early and then calls `useThing` is reported too.
+rule:
+  all:
+    - any:
+        - kind: lexical_declaration
+        - kind: variable_declaration
+        - kind: expression_statement
+    - has:
+        kind: call_expression
+        stopBy:
+          any:
+            - kind: arrow_function
+            - kind: function_expression
+            - kind: function_declaration
+            - kind: method_definition
+            - kind: generator_function_declaration
+            - kind: generator_function
+        has:
+          field: function
+          any:
+            - kind: identifier
+              regex: '^use[A-Z]'
+            - kind: member_expression
+              regex: '^React\.use[A-Z]'
+    - follows:
+        any:
+          - kind: return_statement
+          - all:
+              - any:
+                  - kind: if_statement
+                  - kind: try_statement
+                  - kind: switch_statement
+                  - kind: for_statement
+                  - kind: for_in_statement
+                  - kind: while_statement
+                  - kind: do_statement
+              - has:
+                  kind: return_statement
+                  stopBy:
+                    any:
+                      - kind: arrow_function
+                      - kind: function_expression
+                      - kind: function_declaration
+                      - kind: method_definition
+                      - kind: generator_function_declaration
+                      - kind: generator_function
+        stopBy: end

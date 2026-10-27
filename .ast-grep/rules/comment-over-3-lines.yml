@@ -1,0 +1,94 @@
+id: comment-over-3-lines
+language: rust
+severity: error
+message: "Comment run is longer than three lines; redesign instead of explaining (apply-style: Comments and API documentation)."
+# A run is adjacent comments of any kind. Blank lines, attributes, `,` and `;` do not end
+# it, and it carries into and out of nested nodes. Walks step one neighbor at a time, as
+# `stopBy` walks can visit hidden grammar nodes. `run-N`: starts N lines of its run.
+utils:
+  comment:
+    any: [{kind: line_comment}, {kind: block_comment}]
+  attr-open:
+    any: [{regex: '^#$'}, {regex: '^!$', follows: {regex: '^#$'}}]
+  attr-repeat: {regex: '^\$\((\s*#!?\s*\[[^\]]*\])+\s*\)[^()\[\]{}]*$'}
+  see-through:
+    any:
+      - kind: attribute_item
+      - kind: inner_attribute_item
+      - kind: empty_statement
+      - regex: '^[,;]$'
+      - matches: attr-open
+      - {kind: token_tree, regex: '^\[', follows: {matches: attr-open}}
+      - {kind: token_tree_pattern, regex: '^\[', follows: {matches: attr-open}}
+      - {kind: ERROR, regex: '^#!?\[[\s\S]*\]$'}
+      - {kind: token_repetition, matches: attr-repeat}
+      - {kind: token_repetition_pattern, matches: attr-repeat}
+  first:
+    any:
+      - not: {follows: {regex: '[\s\S]'}}
+      - follows: {all: [{matches: see-through}, {matches: first}]}
+  last:
+    any:
+      - not: {precedes: {regex: '[\s\S]'}}
+      - precedes: {all: [{matches: see-through}, {matches: last}]}
+  lines-2: {regex: '\n[\s\S]'}
+  lines-3: {regex: '\n[\s\S]*\n[\s\S]'}
+  lines-4: {regex: '\n[\s\S]*\n[\s\S]*\n[\s\S]'}
+  opens-1: {has: {all: [{matches: first}, {any: [{matches: comment}, {matches: opens-1}]}]}}
+  opens-2: {has: {all: [{matches: first}, {any: [{matches: run-2}, {matches: opens-2}]}]}}
+  opens-3: {has: {all: [{matches: first}, {any: [{matches: run-3}, {matches: opens-3}]}]}}
+  step-1:
+    precedes:
+      any:
+        - matches: comment
+        - matches: opens-1
+        - all: [{matches: see-through}, {matches: step-1}]
+  step-2:
+    precedes:
+      any:
+        - matches: run-2
+        - matches: opens-2
+        - all: [{matches: see-through}, {matches: step-2}]
+  step-3:
+    precedes:
+      any:
+        - matches: run-3
+        - matches: opens-3
+        - all: [{matches: see-through}, {matches: step-3}]
+  next-1:
+    any: [{matches: step-1}, {all: [{matches: last}, {inside: {matches: next-1}}]}]
+  next-2:
+    any: [{matches: step-2}, {all: [{matches: last}, {inside: {matches: next-2}}]}]
+  next-3:
+    any: [{matches: step-3}, {all: [{matches: last}, {inside: {matches: next-3}}]}]
+  run-2:
+    matches: comment
+    any: [{matches: lines-2}, {matches: next-1}]
+  run-3:
+    matches: comment
+    any:
+      - matches: lines-3
+      - all: [{matches: lines-2}, {matches: next-1}]
+      - matches: next-2
+  run-4:
+    matches: comment
+    any:
+      - matches: lines-4
+      - all: [{matches: lines-3}, {matches: next-1}]
+      - all: [{matches: lines-2}, {matches: next-2}]
+      - matches: next-3
+  closes-over:
+    has: {all: [{matches: last}, {any: [{matches: over}, {matches: closes-over}]}]}
+  back-over:
+    any:
+      - follows:
+          any:
+            - matches: over
+            - matches: closes-over
+            - all: [{matches: see-through}, {matches: back-over}]
+      - all: [{matches: first}, {inside: {matches: back-over}}]
+  over:
+    matches: comment
+    any: [{matches: run-4}, {matches: back-over}]
+rule:
+  matches: over

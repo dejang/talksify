@@ -1,0 +1,12 @@
+id: no-ad-hoc-thread-spawn
+language: rust
+severity: error
+message: "Work off the UI thread is a Job chained into the existing job flow; do not spawn threads or channels directly (review-change: Threaded work uses Jobs)."
+rule:
+  any:
+    - pattern: std::thread::spawn($$$)
+    - pattern: thread::spawn($$$)
+    - pattern: tokio::spawn($$$)
+    - pattern: std::thread::Builder::new()
+    - pattern: std::sync::mpsc::channel()
+    - pattern: mpsc::channel()

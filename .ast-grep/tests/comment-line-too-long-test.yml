@@ -1,0 +1,35 @@
+id: comment-line-too-long
+valid:
+  - |
+    fn probe() {
+        // a plain comment whose text stays inside the ninety-six character budget
+        /// a doc comment of exactly ninety-six characters is allowed and this line is that exact width.
+        let _ = 1;
+    }
+  - |
+    fn probe() {
+        /* a block comment line of exactly ninety-six characters is allowed and this line is that wide*/
+        let _ = 1;
+    }
+  - "fn probe() {\r\n    // a plain comment of exactly ninety-six characters followed by a CRLF ending is still fine here\r\n}\r\n"
+invalid:
+  - |
+    fn probe() {
+        // this plain comment carries the whole explanation on one physical line because the line-count rules would otherwise never see it at all
+        let _ = 1;
+    }
+  - |
+    /// a doc comment of exactly ninety-seven characters is over the cap and this line is that exact.
+    fn probe() {}
+  - |
+    fn probe() {
+        /* a block comment line of exactly ninety-seven characters is over the cap and the line's wide */
+        let _ = 1;
+    }
+  - |
+    fn probe() {
+        /* short first line
+           the second line of a block comment is measured from its first non-space character, and it's over.
+        */
+        let _ = 1;
+    }

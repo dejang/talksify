@@ -1,0 +1,36 @@
+id: no-fixed-layout-size
+snapshots:
+  "fn probe() {\n    let _ = container(1).center(Length::Fixed(30.0));\n}\n":
+    labels:
+    - source: Length::Fixed(30.0)
+      style: primary
+      start: 45
+      end: 64
+  "fn probe() {\n    let _ = container(1).height(24);\n}\n":
+    labels:
+    - source: container(1).height(24)
+      style: primary
+      start: 25
+      end: 48
+    - source: "24"
+      style: secondary
+      start: 45
+      end: 47
+    - source: (24)
+      style: secondary
+      start: 44
+      end: 48
+  "fn probe() {\n    let _ = container(1).width(172.0);\n}\n":
+    labels:
+    - source: container(1).width(172.0)
+      style: primary
+      start: 25
+      end: 50
+    - source: "172.0"
+      style: secondary
+      start: 44
+      end: 49
+    - source: (172.0)
+      style: secondary
+      start: 43
+      end: 50

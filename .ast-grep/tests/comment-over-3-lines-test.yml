@@ -1,0 +1,210 @@
+id: comment-over-3-lines
+valid:
+  - |
+    fn probe() {
+        // one
+        // two
+        // three
+        let _ = 1;
+    }
+  - |
+    /// one
+    ///
+    /// three
+    fn probe() {}
+  - |
+    //! one
+    //! two
+    //! three
+    use std::io;
+  - |
+    /* one
+       two
+       three */
+    fn probe() {}
+  - |
+    /** one
+        two
+        three */
+    fn probe() {}
+  - |
+    // one
+    /// two
+    /* three */
+    fn probe() {}
+  - |
+    // one
+    // two
+    // three
+    fn probe() {}
+    // four
+    // five
+    // six
+    fn other() {}
+invalid:
+  - |
+    fn probe() {
+        // one
+        // two
+        // three
+        // four
+        let _ = 1;
+    }
+  - |
+    /// one
+    /// two
+    /// three
+    /// four
+    fn probe() {}
+  - |
+    //! one
+    //! two
+    //! three
+    //! four
+    use std::io;
+  - |
+    /// One line of prose and a doctest.
+    ///
+    /// ```
+    /// let _ = 1;
+    /// ```
+    fn probe() {}
+  - |
+    /// One line of prose.
+    ///
+    /// # Errors
+    /// Fails on empty input.
+    fn probe() {}
+  - |
+    /* one
+       two
+       three
+       four */
+    fn probe() {}
+  - |
+    /** one
+        two
+        three
+        four */
+    fn probe() {}
+  - |
+    /*! one
+        two
+        three
+        four */
+    use std::io;
+  - |
+    // one
+    /// two
+    /* three */
+    //! four
+    fn probe() {}
+  - |
+    /* one
+       two */
+    // three
+    // four
+    fn probe() {}
+  - |
+    // one
+    // two
+    /* three
+       four */
+    fn probe() {}
+  - |
+    // one
+    // two
+    // three
+
+    // four
+    fn probe() {}
+  - |
+    /// one
+    /// two
+    #[derive(Debug)]
+    #[allow(dead_code)]
+    // three
+    // four
+    struct Probe;
+  - |
+    impl Probe {
+        /// one
+        /// two
+        /// three
+        /// four
+        fn probe(&self) {}
+    }
+  - |
+    struct Probe {
+        a: u8, // one
+        // two
+        // three
+        // four
+        b: u8,
+    }
+  - |
+    fn probe(x: u8) {
+        match x {
+            // one
+            // two
+            #[cfg(test)]
+            // three
+            // four
+            1 => {}
+            _ => {}
+        }
+    }
+  - |
+    fn probe() -> Probe {
+        Probe {
+            // one
+            // two
+            #[cfg(test)]
+            // three
+            // four
+            a: 1,
+        }
+    }
+  - |
+    fn probe() {
+        let _ = [
+            1 // one
+            // two
+            ,
+            // three
+            // four
+        ];
+    }
+  - |
+    macro_rules! probe {
+        () => {
+            // one
+            // two
+            #[derive(Debug)]
+            // three
+            // four
+            struct Probe;
+        };
+    }
+  - |
+    macro_rules! probe {
+        (
+            // one
+            // two
+            #[cfg(test)]
+            // three
+            // four
+            $x:ident
+        ) => {};
+    }
+  - |
+    macro_rules! probe {
+        ($(#[$m:meta])* $n:ident) => {
+            // one
+            // two
+            $(#[$m])*
+            // three
+            // four
+            struct $n;
+        };
+    }

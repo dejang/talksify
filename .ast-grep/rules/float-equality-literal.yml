@@ -1,0 +1,86 @@
+id: float-equality-literal
+language: rust
+severity: error
+message: "Comparing a float to a literal for exact equality is fragile; compare with a derived tolerance or a range (review-change: Precision)."
+utils:
+  float-var-binding:
+    kind: let_declaration
+    all:
+      - has:
+          field: pattern
+          kind: identifier
+          pattern: $VAR
+      - has:
+          field: value
+          any:
+            - kind: float_literal
+            - kind: unary_expression
+              has:
+                kind: float_literal
+  zero-float-literal:
+    kind: float_literal
+    regex: '^0\.0+(_0+)*(_?f(32|64))?$'
+rule:
+  any:
+    - kind: binary_expression
+      all:
+        - has:
+            field: operator
+            regex: '==|!='
+        - any:
+            - has:
+                kind: float_literal
+                stopBy: end
+            - all:
+                - inside:
+                    kind: block
+                    has:
+                      matches: float-var-binding
+                    stopBy: end
+                - has:
+                    kind: identifier
+                    pattern: $VAR
+                    stopBy: end
+    - kind: binary_expression
+      all:
+        - has:
+            field: operator
+            regex: '<=|>|<|>='
+        - has:
+            pattern: $X.abs()
+        - has:
+            matches: zero-float-literal
+    - kind: unary_expression
+      all:
+        - regex: '^!'
+        - has:
+            kind: binary_expression
+            all:
+              - has:
+                  field: operator
+                  regex: '<|>|<=|>='
+              - has:
+                  kind: float_literal
+                  stopBy: end
+            stopBy: end
+    - kind: macro_invocation
+      all:
+        - has:
+            field: macro
+            regex: '^(debug_)?assert_(eq|ne)$'
+        - any:
+            - has:
+                kind: float_literal
+                stopBy: end
+            - all:
+                - inside:
+                    kind: block
+                    has:
+                      matches: float-var-binding
+                    stopBy: end
+                - has:
+                    kind: token_tree
+                    has:
+                      kind: identifier
+                      pattern: $VAR
+                      stopBy: end

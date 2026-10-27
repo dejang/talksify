@@ -1,0 +1,46 @@
+id: allow-clippy-lint
+snapshots:
+  "#[allow(clippy::cast_precision_loss)]\nfn probe(count: usize) -> f64 {\n    count as f64\n}\n":
+    labels:
+    - source: "#[allow(clippy::cast_precision_loss)]"
+      style: primary
+      start: 0
+      end: 37
+    - source: allow(clippy::cast_precision_loss)
+      style: secondary
+      start: 2
+      end: 36
+    - source: |-
+        fn probe(count: usize) -> f64 {
+            count as f64
+        }
+      style: secondary
+      start: 38
+      end: 88
+  "#[allow(clippy::too_many_arguments)]\nfn probe(a: u32, b: u32, c: u32, d: u32, e: u32, f: u32, g: u32, h: u32) -> u32 {\n    a + b + c + d + e + f + g + h\n}\n":
+    labels:
+    - source: "#[allow(clippy::too_many_arguments)]"
+      style: primary
+      start: 0
+      end: 36
+    - source: allow(clippy::too_many_arguments)
+      style: secondary
+      start: 2
+      end: 35
+    - source: |-
+        fn probe(a: u32, b: u32, c: u32, d: u32, e: u32, f: u32, g: u32, h: u32) -> u32 {
+            a + b + c + d + e + f + g + h
+        }
+      style: secondary
+      start: 37
+      end: 154
+  "#[cfg(test)]\nmod tests {\n    #![allow(clippy::cast_precision_loss, clippy::float_cmp)]\n}\n":
+    labels:
+    - source: "#![allow(clippy::cast_precision_loss, clippy::float_cmp)]"
+      style: primary
+      start: 29
+      end: 86
+    - source: allow(clippy::cast_precision_loss, clippy::float_cmp)
+      style: secondary
+      start: 32
+      end: 85

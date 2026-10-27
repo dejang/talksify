@@ -1,0 +1,25 @@
+id: allow-clippy-lint
+valid:
+  - |
+    fn probe(bpm: f64) -> i64 {
+        // BPM stays within i64 range.
+        #[allow(clippy::cast_possible_truncation)]
+        let rounded = bpm as i64;
+        rounded
+    }
+invalid:
+  - |
+    #[cfg(test)]
+    mod tests {
+        #![allow(clippy::cast_precision_loss, clippy::float_cmp)]
+    }
+  - |
+    #[allow(clippy::too_many_arguments)]
+    fn probe(a: u32, b: u32, c: u32, d: u32, e: u32, f: u32, g: u32, h: u32) -> u32 {
+        a + b + c + d + e + f + g + h
+    }
+  - |
+    #[allow(clippy::cast_precision_loss)]
+    fn probe(count: usize) -> f64 {
+        count as f64
+    }

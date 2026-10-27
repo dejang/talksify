@@ -1,0 +1,30 @@
+# A lint finding is fixed, never silenced. Bans the ESLint and oxlint
+# directives that switch a rule off: the disable comments (whole file,
+# -line, -next-line) and ESLint's inline rule configuration. One rule per
+# grammar, because ast-grep parses .ts, .tsx and JavaScript separately.
+id: no-lint-disable-ts
+language: TypeScript
+severity: error
+message: Lint directives that disable a rule are forbidden. Fix the finding instead.
+note: 'Covers eslint-disable*, oxlint-disable* and inline `/* eslint rule: off */` configuration.'
+rule:
+  kind: comment
+  regex: ^(//|/\*+)\s*((eslint|oxlint)-disable|eslint\s+[@\w/-]+\s*:)
+---
+id: no-lint-disable-tsx
+language: Tsx
+severity: error
+message: Lint directives that disable a rule are forbidden. Fix the finding instead.
+note: 'Covers eslint-disable*, oxlint-disable* and inline `/* eslint rule: off */` configuration.'
+rule:
+  kind: comment
+  regex: ^(//|/\*+)\s*((eslint|oxlint)-disable|eslint\s+[@\w/-]+\s*:)
+---
+id: no-lint-disable-js
+language: JavaScript
+severity: error
+message: Lint directives that disable a rule are forbidden. Fix the finding instead.
+note: 'Covers eslint-disable*, oxlint-disable* and inline `/* eslint rule: off */` configuration.'
+rule:
+  kind: comment
+  regex: ^(//|/\*+)\s*((eslint|oxlint)-disable|eslint\s+[@\w/-]+\s*:)

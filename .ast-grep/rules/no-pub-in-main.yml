@@ -1,0 +1,8 @@
+id: no-pub-in-main
+language: Rust
+severity: error
+message: "Do not use `pub` in `main.rs` (`pub mod` disables rustc dead_code and visibility checks across the binary crate, and no external module can import from `main.rs`)."
+files:
+  - "**/main.rs"
+rule:
+  kind: visibility_modifier

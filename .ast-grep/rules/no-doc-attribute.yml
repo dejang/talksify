@@ -1,0 +1,32 @@
+id: no-doc-attribute
+language: rust
+severity: error
+message: "Write docs as `///` or `//!` comments, not `doc = ...` attributes, so the comment rules see them."
+# Covers `#[doc = ...]`, `cfg_attr(..., doc = ...)`, and both forms inside macro bodies,
+# where an attribute is `#` or `#!` followed by a `[...]` token tree. Comments may sit
+# anywhere between the tokens.
+utils:
+  comment: {any: [{kind: line_comment}, {kind: block_comment}]}
+  after-hash:
+    follows:
+      any:
+        - regex: '^#$'
+        - all: [{matches: comment}, {matches: after-hash}]
+  after-open:
+    any:
+      - matches: after-hash
+      - follows:
+          any:
+            - all: [{regex: '^!$'}, {matches: after-hash}]
+            - all: [{matches: comment}, {matches: after-open}]
+rule:
+  any:
+    - kind: attribute
+      any:
+        - regex: '^(r#)?doc(\s|/\*[\s\S]*?\*/|//[^\n]*\n)*='
+        - regex: '^(r#)?cfg_attr\b[\s\S]*,(\s|/\*[\s\S]*?\*/|//[^\n]*\n)*(r#)?doc(\s|/\*[\s\S]*?\*/|//[^\n]*\n)*='
+    - kind: token_tree
+      matches: after-open
+      any:
+        - regex: '^\[(\s|/\*[\s\S]*?\*/|//[^\n]*\n)*(r#)?doc(\s|/\*[\s\S]*?\*/|//[^\n]*\n)*='
+        - regex: '^\[(\s|/\*[\s\S]*?\*/|//[^\n]*\n)*(r#)?cfg_attr\b[\s\S]*,(\s|/\*[\s\S]*?\*/|//[^\n]*\n)*(r#)?doc(\s|/\*[\s\S]*?\*/|//[^\n]*\n)*='

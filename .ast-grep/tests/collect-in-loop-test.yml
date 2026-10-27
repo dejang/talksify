@@ -1,0 +1,46 @@
+id: collect-in-loop
+valid:
+  - |
+    fn probe(chunks: &[Chunk]) -> Vec<Row> {
+        chunks.iter().flat_map(|chunk| chunk.rows.iter().cloned()).collect()
+    }
+  - |
+    fn probe(chunks: &[Chunk]) {
+        let mut scratch = Vec::new();
+        for chunk in chunks {
+            scratch.clear();
+            scratch.extend(chunk.rows.iter().copied());
+        }
+    }
+invalid:
+  - |
+    fn probe(chunks: &[Chunk]) {
+        for chunk in chunks {
+            let _rows: Vec<Row> = chunk.rows.iter().copied().collect();
+        }
+    }
+  - |
+    fn probe(chunks: &[Chunk]) {
+        for chunk in chunks {
+            let _rows = chunk.rows.iter().copied().collect::<Vec<_>>();
+        }
+    }
+  - |
+    fn probe(chunks: &[Chunk]) {
+        for chunk in chunks {
+            let mut rows = Vec::new();
+            for row in &chunk.rows {
+                rows.push(*row);
+            }
+        }
+    }
+  - |
+    fn without_held_out(accepted: &[usize], held_out: usize) -> Vec<usize> {
+        accepted.iter().copied().filter(|&row| row != held_out).collect()
+    }
+
+    fn probe(accepted: &[usize]) {
+        for &held_out in accepted {
+            let _remaining = without_held_out(accepted, held_out);
+        }
+    }

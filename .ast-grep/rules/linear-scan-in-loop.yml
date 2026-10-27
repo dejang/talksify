@@ -1,0 +1,64 @@
+id: linear-scan-in-loop
+language: rust
+severity: error
+message: "Linear scan inside a loop is quadratic; index the collection or hoist the lookup (apply-style: Algorithmic cost)."
+utils:
+  direct-scan:
+    any:
+      - pattern: $C.iter().find($$$)
+      - pattern: $C.iter().position($$$)
+      - pattern: $C.iter().rposition($$$)
+      - pattern: $C.iter().any($$$)
+      - pattern: $C.iter().all($$$)
+      - pattern: $C.into_iter().find($$$)
+      - pattern: $C.into_iter().position($$$)
+      - pattern: $C.into_iter().any($$$)
+  helper-scan-call:
+    kind: call_expression
+    all:
+      - has:
+          field: function
+          any:
+            - kind: identifier
+              pattern: $FN
+            - kind: field_expression
+              has:
+                field: field
+                kind: field_identifier
+                pattern: $FN
+      - inside:
+          kind: source_file
+          has:
+            kind: function_item
+            all:
+              - has:
+                  field: name
+                  pattern: $FN
+              - has:
+                  field: body
+                  has:
+                    matches: direct-scan
+                    stopBy: end
+            stopBy: end
+          stopBy: end
+rule:
+  any:
+    - matches: direct-scan
+    - matches: helper-scan-call
+  inside:
+    any:
+      - kind: for_expression
+      - kind: while_expression
+      - kind: loop_expression
+    stopBy: end
+  not:
+    inside:
+      kind: mod_item
+      follows:
+        kind: attribute_item
+        has:
+          kind: attribute
+          regex: cfg\(test\)
+          stopBy: end
+        stopBy: end
+      stopBy: end

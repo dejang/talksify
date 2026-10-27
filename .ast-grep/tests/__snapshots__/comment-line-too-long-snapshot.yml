@@ -1,0 +1,41 @@
+id: comment-line-too-long
+snapshots:
+  "/// This doc comment states an API contract on one physical line that is far too\n/// wide, because the ninety-six character width limit counts doc comments and not just plain ones here\nfn probe() {}\n":
+    labels:
+    - source: |
+        /// wide, because the ninety-six character width limit counts doc comments and not just plain ones here
+      style: primary
+      start: 81
+      end: 185
+  "/// a doc comment of exactly ninety-seven characters is over the cap and this line is that exact.\nfn probe() {}\n":
+    labels:
+    - source: |
+        /// a doc comment of exactly ninety-seven characters is over the cap and this line is that exact.
+      style: primary
+      start: 0
+      end: 98
+  "fn probe() {\n    /* a block comment line of exactly ninety-seven characters is over the cap and the line's wide */\n    let _ = 1;\n}\n":
+    labels:
+    - source: >-
+        /* a block comment line of exactly ninety-seven characters is over the cap and
+        the line's wide */
+      style: primary
+      start: 17
+      end: 114
+  "fn probe() {\n    /* short first line\n       the second line of a block comment is measured from its first non-space character, and it's over.\n    */\n    let _ = 1;\n}\n":
+    labels:
+    - source: |-
+        /* short first line
+               the second line of a block comment is measured from its first non-space character, and it's over.
+            */
+      style: primary
+      start: 17
+      end: 148
+  "fn probe() {\n    // this plain comment carries the whole explanation on one physical line because the line-count rules would otherwise never see it at all\n    let _ = 1;\n}\n":
+    labels:
+    - source: >-
+        // this plain comment carries the whole explanation on one physical line
+        because the line-count rules would otherwise never see it at all
+      style: primary
+      start: 17
+      end: 154

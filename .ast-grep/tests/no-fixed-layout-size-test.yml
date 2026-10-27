@@ -1,0 +1,22 @@
+id: no-fixed-layout-size
+valid:
+  - |
+    fn probe() {
+        let _ = container(1).width(Length::Fill);
+        let _ = container(1).width(Length::FillPortion(2));
+        let _ = container(1).height(available);
+        let _ = container(1).padding(8);
+    }
+invalid:
+  - |
+    fn probe() {
+        let _ = container(1).width(172.0);
+    }
+  - |
+    fn probe() {
+        let _ = container(1).height(24);
+    }
+  - |
+    fn probe() {
+        let _ = container(1).center(Length::Fixed(30.0));
+    }

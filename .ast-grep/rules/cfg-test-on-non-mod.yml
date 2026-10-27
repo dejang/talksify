@@ -1,0 +1,49 @@
+id: cfg-test-on-non-mod
+language: rust
+severity: error
+message: "Test-only code belongs in a #[cfg(test)] mod, not on a production function, field or impl (review-change: No test code in production code)."
+rule:
+  any:
+    - kind: attribute_item
+      has:
+        kind: attribute
+        regex: cfg\(test\)
+        stopBy: end
+      not:
+        precedes:
+          kind: mod_item
+    - kind: impl_item
+      all:
+        - has:
+            field: type
+            any:
+              - kind: type_identifier
+                pattern: $T
+              - kind: generic_type
+                has:
+                  field: type
+                  kind: type_identifier
+                  pattern: $T
+        - inside:
+            kind: mod_item
+            follows:
+              kind: attribute_item
+              has:
+                kind: attribute
+                regex: cfg\(test\)
+                stopBy: end
+              stopBy: end
+            stopBy: end
+        - inside:
+            kind: source_file
+            has:
+              any:
+                - kind: struct_item
+                  has:
+                    field: name
+                    pattern: $T
+                - kind: enum_item
+                  has:
+                    field: name
+                    pattern: $T
+            stopBy: end

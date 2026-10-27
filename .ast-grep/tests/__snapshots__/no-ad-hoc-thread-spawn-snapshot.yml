@@ -1,0 +1,20 @@
+id: no-ad-hoc-thread-spawn
+snapshots:
+  "fn probe() {\n    let _ = std::sync::mpsc::channel();\n}\n":
+    labels:
+    - source: std::sync::mpsc::channel()
+      style: primary
+      start: 25
+      end: 51
+  "fn probe() {\n    let _ = std::thread::Builder::new();\n}\n":
+    labels:
+    - source: std::thread::Builder::new()
+      style: primary
+      start: 25
+      end: 52
+  "fn probe() {\n    let _ = std::thread::spawn(move || work());\n}\n":
+    labels:
+    - source: std::thread::spawn(move || work())
+      style: primary
+      start: 25
+      end: 59

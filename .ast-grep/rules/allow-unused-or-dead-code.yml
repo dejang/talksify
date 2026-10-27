@@ -1,0 +1,10 @@
+id: allow-unused-or-dead-code
+language: rust
+severity: error
+message: "Do not silence dead_code/unused warnings to keep code around; delete it (review-change: Repo conventions)."
+rule:
+  kind: attribute_item
+  has:
+    kind: attribute
+    regex: '^allow\([^)]*(dead_code|unused)'
+    stopBy: end

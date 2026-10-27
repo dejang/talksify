@@ -1,0 +1,28 @@
+id: allow-clippy-lint
+language: rust
+severity: error
+message: "Do not suppress clippy lints on modules, impls, or functions; refactor the code or scope a cast attribute to the specific let binding (review-change: Repo conventions)."
+rule:
+  any:
+    - kind: inner_attribute_item
+      has:
+        kind: attribute
+        regex: '^(allow|expect)\('
+        stopBy: end
+    - kind: attribute_item
+      all:
+        - has:
+            kind: attribute
+            regex: '^(allow|expect)\([^)]*clippy::'
+            stopBy: end
+        - any:
+            - precedes:
+                any:
+                  - kind: mod_item
+                  - kind: impl_item
+                  - kind: function_item
+                stopBy: end
+            - has:
+                kind: attribute
+                regex: 'clippy::(too_many_arguments|too_many_lines|excessive_nesting|cognitive_complexity|float_cmp|needless_range_loop)'
+                stopBy: end

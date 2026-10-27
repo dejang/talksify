@@ -1,0 +1,4 @@
+allowBuilds:
+  '@ast-grep/cli': true
+  core-js: true
+  esbuild: true

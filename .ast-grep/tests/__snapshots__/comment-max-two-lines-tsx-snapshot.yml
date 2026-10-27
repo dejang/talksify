@@ -1,0 +1,51 @@
+id: comment-max-two-lines-tsx
+snapshots:
+  "// one\n\n// two\n// three\nconst probe = <div />;\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 0
+      end: 6
+    - source: // three
+      style: secondary
+      start: 15
+      end: 23
+    - source: // two
+      style: secondary
+      start: 8
+      end: 14
+  "const probe = (\n  <div>\n    {/* one\n        two\n        three */}\n  </div>\n);\n":
+    labels:
+    - source: |-
+        {/* one
+                two
+                three */}
+      style: primary
+      start: 28
+      end: 65
+  "const probe = (\n  <div>\n    {/* one */}\n\n    {/* two\n        three */}\n  </div>\n);\n":
+    labels:
+    - source: "{/* one */}"
+      style: primary
+      start: 28
+      end: 39
+    - source: |-
+        {/* two
+                three */}
+      style: secondary
+      start: 45
+      end: 70
+  "const probe = (\n  <div>\n    {/* one */}\n    {/* two */}\n    {/* three */}\n  </div>\n);\n":
+    labels:
+    - source: "{/* one */}"
+      style: primary
+      start: 28
+      end: 39
+    - source: "{/* three */}"
+      style: secondary
+      start: 60
+      end: 73
+    - source: "{/* two */}"
+      style: secondary
+      start: 44
+      end: 55

@@ -1,0 +1,14 @@
+id: local-const
+valid:
+  - |
+    const STEP: f32 = 0.25;
+
+    fn probe(config: &Config) -> f32 {
+        config.step()
+    }
+invalid:
+  - |
+    fn probe() -> f32 {
+        const STEP: f32 = 0.25;
+        STEP
+    }

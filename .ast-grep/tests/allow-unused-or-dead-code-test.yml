@@ -1,0 +1,18 @@
+id: allow-unused-or-dead-code
+valid:
+  - |
+    #[allow(clippy::too_many_arguments)]
+    fn probe(a: u32) -> u32 {
+        a
+    }
+invalid:
+  - |
+    #[allow(dead_code)]
+    fn probe(a: u32) -> u32 {
+        a
+    }
+  - |
+    fn probe() {
+        #[allow(unused_variables)]
+        let a = 1;
+    }

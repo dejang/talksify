@@ -1,0 +1,35 @@
+id: linear-scan-in-loop
+valid:
+  - |
+    fn probe(rows: &[Row], by_id: &HashMap<u32, Row>) {
+        for row in rows {
+            let _ = by_id.get(&row.id);
+        }
+    }
+  - |
+    fn probe(rows: &[Row], wanted: u32) -> Option<&Row> {
+        rows.iter().find(|row| row.id == wanted)
+    }
+invalid:
+  - |
+    fn probe(rows: &[Row], others: &[Row]) {
+        for row in rows {
+            let _ = others.iter().find(|other| other.id == row.id);
+        }
+    }
+  - |
+    fn probe(rows: &[Row], others: &[Row]) {
+        while let Some(row) = rows.first() {
+            let _ = others.iter().position(|other| other.id == row.id);
+        }
+    }
+  - |
+    fn feature_dimension(names: &[String], target: &str) -> Option<usize> {
+        names.iter().position(|name| name == target)
+    }
+
+    fn resolve(names: &[String], queries: &[&str]) {
+        for query in queries {
+            let _ = feature_dimension(names, query);
+        }
+    }

@@ -1,0 +1,18 @@
+id: narrative-todo-comment
+valid:
+  - |
+    fn probe() {
+        // Panics when the tag is missing from the index.
+        let _ = 1;
+    }
+invalid:
+  - |
+    fn probe() {
+        // TODO: drop the legacy tag path once the index is rebuilt.
+        let _ = 1;
+    }
+  - |
+    fn probe() {
+        // FIXME: this rounds the wrong way on ties.
+        let _ = 1;
+    }

@@ -1,0 +1,7 @@
+id: migration-sql
+language: rust
+severity: error
+message: "The schema is WIP: edit CREATE TABLE directly instead of adding migration SQL (AGENTS.md: WIP schema)."
+rule:
+  kind: string_content
+  regex: '\b(ALTER TABLE|ADD COLUMN|DROP COLUMN)\b'

@@ -1,0 +1,44 @@
+id: too-many-params
+language: rust
+severity: error
+message: "Function takes too many parameters or multiple mutable outputs; group related state into a struct or return a value (apply-style: Naming and function inputs)."
+utils:
+  param:
+    kind: parameter
+  mut-param:
+    kind: parameter
+    has:
+      field: type
+      kind: reference_type
+      has:
+        kind: mutable_specifier
+  param-6:
+    matches: param
+    follows:
+      matches: param
+      stopBy: end
+      follows:
+        matches: param
+        stopBy: end
+        follows:
+          matches: param
+          stopBy: end
+          follows:
+            matches: param
+            stopBy: end
+            follows:
+              matches: param
+              stopBy: end
+  mut-param-2:
+    matches: mut-param
+    follows:
+      matches: mut-param
+      stopBy: end
+rule:
+  kind: function_item
+  has:
+    field: parameters
+    has:
+      any:
+        - matches: param-6
+        - matches: mut-param-2

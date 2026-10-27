@@ -1,0 +1,14 @@
+id: unwrap-or-expect
+snapshots:
+  "fn probe() -> u32 {\n    read().expect(\"the store is open\")\n}\n":
+    labels:
+    - source: read().expect("the store is open")
+      style: primary
+      start: 24
+      end: 58
+  "fn probe(row: Option<u32>) -> u32 {\n    row.unwrap()\n}\n":
+    labels:
+    - source: row.unwrap()
+      style: primary
+      start: 40
+      end: 52

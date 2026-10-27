@@ -1,0 +1,68 @@
+id: collect-in-loop
+language: rust
+severity: error
+message: "Do not materialise a collection per iteration; traverse the iterator or reuse a buffer (apply-style: Algorithmic cost)."
+utils:
+  direct-collect:
+    any:
+      - pattern: $C.collect()
+      - pattern: $C.collect::<$T>()
+      - kind: let_declaration
+        all:
+          - has:
+              field: pattern
+              kind: identifier
+              pattern: $V
+          - has:
+              field: value
+              any:
+                - pattern: Vec::new()
+                - pattern: Vec::with_capacity($$$)
+                - pattern: HashMap::new()
+                - pattern: HashMap::with_capacity($$$)
+                - pattern: HashSet::new()
+                - pattern: HashSet::with_capacity($$$)
+                - pattern: BTreeMap::new()
+                - pattern: BTreeSet::new()
+          - inside:
+              kind: block
+              has:
+                any:
+                  - pattern: $V.push($$$)
+                  - pattern: $V.insert($$$)
+                  - pattern: $V.extend($$$)
+                stopBy: end
+  helper-collect-call:
+    kind: call_expression
+    all:
+      - has:
+          field: function
+          kind: identifier
+          pattern: $FN
+      - inside:
+          kind: source_file
+          has:
+            kind: function_item
+            all:
+              - has:
+                  field: name
+                  pattern: $FN
+              - has:
+                  field: body
+                  has:
+                    any:
+                      - pattern: $C.collect()
+                      - pattern: $C.collect::<$T>()
+                    stopBy: end
+            stopBy: end
+          stopBy: end
+rule:
+  any:
+    - matches: direct-collect
+    - matches: helper-collect-call
+  inside:
+    any:
+      - kind: for_expression
+      - kind: while_expression
+      - kind: loop_expression
+    stopBy: end

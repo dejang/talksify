@@ -1,0 +1,108 @@
+id: float-equality-literal
+snapshots:
+  "fn probe(gain: f32) -> bool {\n    gain == 0.0\n}\n":
+    labels:
+    - source: gain == 0.0
+      style: primary
+      start: 34
+      end: 45
+    - source: ==
+      style: secondary
+      start: 39
+      end: 41
+    - source: "0.0"
+      style: secondary
+      start: 42
+      end: 45
+  "fn probe(mean: f64) {\n    let expected_mean = -0.25;\n    assert_eq!(mean, expected_mean);\n}\n":
+    labels:
+    - source: assert_eq!(mean, expected_mean)
+      style: primary
+      start: 57
+      end: 88
+    - source: assert_eq
+      style: secondary
+      start: 57
+      end: 66
+    - source: expected_mean
+      style: secondary
+      start: 30
+      end: 43
+    - source: "0.25"
+      style: secondary
+      start: 47
+      end: 51
+    - source: "-0.25"
+      style: secondary
+      start: 46
+      end: 51
+    - source: let expected_mean = -0.25;
+      style: secondary
+      start: 26
+      end: 52
+    - source: |-
+        {
+            let expected_mean = -0.25;
+            assert_eq!(mean, expected_mean);
+        }
+      style: secondary
+      start: 20
+      end: 91
+    - source: expected_mean
+      style: secondary
+      start: 74
+      end: 87
+    - source: (mean, expected_mean)
+      style: secondary
+      start: 67
+      end: 88
+  "fn probe(spread: f64) -> bool {\n    !(spread > 0.0)\n}\n":
+    labels:
+    - source: "!(spread > 0.0)"
+      style: primary
+      start: 36
+      end: 51
+    - source: ">"
+      style: secondary
+      start: 45
+      end: 46
+    - source: "0.0"
+      style: secondary
+      start: 47
+      end: 50
+    - source: spread > 0.0
+      style: secondary
+      start: 38
+      end: 50
+  "fn probe(value: f64) -> bool {\n    value != 1.0\n}\n":
+    labels:
+    - source: value != 1.0
+      style: primary
+      start: 35
+      end: 47
+    - source: "!="
+      style: secondary
+      start: 41
+      end: 43
+    - source: "1.0"
+      style: secondary
+      start: 44
+      end: 47
+  "fn probe(weight: f64) -> bool {\n    weight.abs() <= 0.0\n}\n":
+    labels:
+    - source: weight.abs() <= 0.0
+      style: primary
+      start: 36
+      end: 55
+    - source: <=
+      style: secondary
+      start: 49
+      end: 51
+    - source: weight.abs()
+      style: secondary
+      start: 36
+      end: 48
+    - source: "0.0"
+      style: secondary
+      start: 52
+      end: 55

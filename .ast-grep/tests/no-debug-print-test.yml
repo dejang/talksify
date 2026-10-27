@@ -1,0 +1,33 @@
+id: no-debug-print
+valid:
+  - |
+    fn probe(count: usize) {
+        log::info!("indexed {count} rows");
+    }
+
+    #[cfg(test)]
+    mod probe_unit {
+        #[test]
+        fn t() {
+            println!("diagnostics for the failing assertion");
+        }
+    }
+  - |
+    // An executable target reports on stdout.
+    fn main() {
+        println!("indexed {0} rows", 1);
+        eprintln!("could not read the index");
+    }
+invalid:
+  - |
+    fn probe(count: usize) {
+        println!("count {count}");
+    }
+  - |
+    fn probe(error: &str) {
+        eprintln!("failed: {error}");
+    }
+  - |
+    fn probe(value: u32) {
+        let _ = dbg!(value);
+    }

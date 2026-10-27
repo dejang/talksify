@@ -1,0 +1,26 @@
+id: module-const
+valid:
+  - |
+    fn probe() -> f32 {
+        const STEP: f32 = 0.25;
+        STEP
+    }
+  - |
+    pub trait Named {
+        const NAME: &'static str;
+    }
+  - |
+    pub struct Probe;
+    impl Named for Probe {
+        const NAME: &'static str = "probe";
+    }
+  - |
+    pub struct Probe;
+    impl Probe {
+        const WIDTH: f32 = 24.0;
+    }
+invalid:
+  - |
+    const MAX_LOG_BYTES: usize = 5_000_000;
+  - |
+    pub(crate) const ROW_HEIGHT: f32 = 24.0;

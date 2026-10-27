@@ -1,0 +1,30 @@
+id: comment-max-two-lines-js
+snapshots:
+  "const probe = (\n  <div>\n    {/* one */}\n    {/* two */}\n    {/* three */}\n  </div>\n);\n":
+    labels:
+    - source: "{/* one */}"
+      style: primary
+      start: 28
+      end: 39
+    - source: "{/* three */}"
+      style: secondary
+      start: 60
+      end: 73
+    - source: "{/* two */}"
+      style: secondary
+      start: 44
+      end: 55
+  "if (ready) {\n  run();\n} // one\n// two\n// three\ndone();\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 24
+      end: 30
+    - source: // three
+      style: secondary
+      start: 38
+      end: 46
+    - source: // two
+      style: secondary
+      start: 31
+      end: 37

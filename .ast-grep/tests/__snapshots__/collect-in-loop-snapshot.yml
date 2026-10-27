@@ -1,0 +1,115 @@
+id: collect-in-loop
+snapshots:
+  "fn probe(chunks: &[Chunk]) {\n    for chunk in chunks {\n        let _rows = chunk.rows.iter().copied().collect::<Vec<_>>();\n    }\n}\n":
+    labels:
+    - source: chunk.rows.iter().copied().collect::<Vec<_>>()
+      style: primary
+      start: 75
+      end: 121
+    - source: |-
+        for chunk in chunks {
+                let _rows = chunk.rows.iter().copied().collect::<Vec<_>>();
+            }
+      style: secondary
+      start: 33
+      end: 128
+  "fn probe(chunks: &[Chunk]) {\n    for chunk in chunks {\n        let _rows: Vec<Row> = chunk.rows.iter().copied().collect();\n    }\n}\n":
+    labels:
+    - source: chunk.rows.iter().copied().collect()
+      style: primary
+      start: 85
+      end: 121
+    - source: |-
+        for chunk in chunks {
+                let _rows: Vec<Row> = chunk.rows.iter().copied().collect();
+            }
+      style: secondary
+      start: 33
+      end: 128
+  "fn probe(chunks: &[Chunk]) {\n    for chunk in chunks {\n        let mut rows = Vec::new();\n        for row in &chunk.rows {\n            rows.push(*row);\n        }\n    }\n}\n":
+    labels:
+    - source: let mut rows = Vec::new();
+      style: primary
+      start: 63
+      end: 89
+    - source: rows
+      style: secondary
+      start: 71
+      end: 75
+    - source: Vec::new()
+      style: secondary
+      start: 78
+      end: 88
+    - source: rows.push(*row)
+      style: secondary
+      start: 135
+      end: 150
+    - source: |-
+        {
+                let mut rows = Vec::new();
+                for row in &chunk.rows {
+                    rows.push(*row);
+                }
+            }
+      style: secondary
+      start: 53
+      end: 167
+    - source: |-
+        for chunk in chunks {
+                let mut rows = Vec::new();
+                for row in &chunk.rows {
+                    rows.push(*row);
+                }
+            }
+      style: secondary
+      start: 33
+      end: 167
+  "fn without_held_out(accepted: &[usize], held_out: usize) -> Vec<usize> {\n    accepted.iter().copied().filter(|&row| row != held_out).collect()\n}\n\nfn probe(accepted: &[usize]) {\n    for &held_out in accepted {\n        let _remaining = without_held_out(accepted, held_out);\n    }\n}\n":
+    labels:
+    - source: without_held_out(accepted, held_out)
+      style: primary
+      start: 234
+      end: 270
+    - source: without_held_out
+      style: secondary
+      start: 234
+      end: 250
+    - source: without_held_out
+      style: secondary
+      start: 3
+      end: 19
+    - source: accepted.iter().copied().filter(|&row| row != held_out).collect()
+      style: secondary
+      start: 77
+      end: 142
+    - source: accepted.iter().copied().filter(|&row| row != held_out).collect()
+      style: secondary
+      start: 77
+      end: 142
+    - source: |-
+        fn without_held_out(accepted: &[usize], held_out: usize) -> Vec<usize> {
+            accepted.iter().copied().filter(|&row| row != held_out).collect()
+        }
+      style: secondary
+      start: 0
+      end: 144
+    - source: |
+        fn without_held_out(accepted: &[usize], held_out: usize) -> Vec<usize> {
+            accepted.iter().copied().filter(|&row| row != held_out).collect()
+        }
+        
+        fn probe(accepted: &[usize]) {
+            for &held_out in accepted {
+                let _remaining = without_held_out(accepted, held_out);
+            }
+        }
+      style: secondary
+      start: 0
+      end: 280
+    - source: |-
+        for &held_out in accepted {
+                let _remaining = without_held_out(accepted, held_out);
+            }
+      style: secondary
+      start: 181
+      end: 277

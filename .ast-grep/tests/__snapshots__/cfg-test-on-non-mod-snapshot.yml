@@ -1,0 +1,87 @@
+id: cfg-test-on-non-mod
+snapshots:
+  "#[cfg(test)]\nimpl Probe {\n    fn probe(&self) {}\n}\n":
+    labels:
+    - source: "#[cfg(test)]"
+      style: primary
+      start: 0
+      end: 12
+    - source: cfg(test)
+      style: secondary
+      start: 2
+      end: 11
+  "pub struct Probe {\n    #[cfg(test)]\n    observed: u32,\n}\n":
+    labels:
+    - source: "#[cfg(test)]"
+      style: primary
+      start: 23
+      end: 35
+    - source: cfg(test)
+      style: secondary
+      start: 25
+      end: 34
+  "pub struct Probe {\n    observed: u32,\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    impl Probe {\n        fn probe(&self) -> u32 {\n            self.observed\n        }\n    }\n}\n":
+    labels:
+    - source: |-
+        impl Probe {
+                fn probe(&self) -> u32 {
+                    self.observed
+                }
+            }
+      style: primary
+      start: 89
+      end: 176
+    - source: Probe
+      style: secondary
+      start: 94
+      end: 99
+    - source: cfg(test)
+      style: secondary
+      start: 43
+      end: 52
+    - source: "#[cfg(test)]"
+      style: secondary
+      start: 41
+      end: 53
+    - source: |-
+        mod tests {
+            use super::*;
+        
+            impl Probe {
+                fn probe(&self) -> u32 {
+                    self.observed
+                }
+            }
+        }
+      style: secondary
+      start: 54
+      end: 178
+    - source: Probe
+      style: secondary
+      start: 11
+      end: 16
+    - source: |-
+        pub struct Probe {
+            observed: u32,
+        }
+      style: secondary
+      start: 0
+      end: 39
+    - source: |
+        pub struct Probe {
+            observed: u32,
+        }
+        
+        #[cfg(test)]
+        mod tests {
+            use super::*;
+        
+            impl Probe {
+                fn probe(&self) -> u32 {
+                    self.observed
+                }
+            }
+        }
+      style: secondary
+      start: 0
+      end: 179

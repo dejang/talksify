@@ -1,0 +1,37 @@
+id: no-debug-print
+language: rust
+severity: error
+message: "Remove the debug print; use the log macros or return the error (review-change: Slop)."
+rule:
+  all:
+    - any:
+        - pattern: println!($$$)
+        - pattern: print!($$$)
+        - pattern: eprintln!($$$)
+        - pattern: eprint!($$$)
+        - pattern: dbg!($$$)
+    # Test-only code reports through the harness, not the log.
+    - not:
+        inside:
+          kind: mod_item
+          follows:
+            kind: attribute_item
+            has:
+              kind: attribute
+              regex: cfg\(test\)
+              stopBy: end
+            stopBy: end
+          stopBy: end
+    # A file declaring `fn main` is an executable target: stdout is its
+    # interface, so writing there is not a leftover debug print.
+    - not:
+        inside:
+          kind: source_file
+          stopBy: end
+          has:
+            kind: function_item
+            has:
+              kind: identifier
+              regex: ^main$
+              stopBy: end
+            stopBy: end

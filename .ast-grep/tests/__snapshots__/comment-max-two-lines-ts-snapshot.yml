@@ -1,0 +1,125 @@
+id: comment-max-two-lines-ts
+snapshots:
+  "/* one */\n// two\n// three\nconst probe = 1;\n":
+    labels:
+    - source: /* one */
+      style: primary
+      start: 0
+      end: 9
+    - source: // three
+      style: secondary
+      start: 17
+      end: 25
+    - source: // two
+      style: secondary
+      start: 10
+      end: 16
+  "/**\n * one\n */\nconst probe = 1;\n":
+    labels:
+    - source: |-
+        /**
+         * one
+         */
+      style: primary
+      start: 0
+      end: 14
+  "// one\n// two\n\n// three\nconst probe = 1;\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 0
+      end: 6
+    - source: // three
+      style: secondary
+      start: 15
+      end: 23
+    - source: // two
+      style: secondary
+      start: 7
+      end: 13
+  "// one\n// two\n// three\nconst probe = 1;\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 0
+      end: 6
+    - source: // three
+      style: secondary
+      start: 14
+      end: 22
+    - source: // two
+      style: secondary
+      start: 7
+      end: 13
+  "class Probe {\n  // one\n  @observed\n  // two\n  // three\n  value = 1;\n}\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 16
+      end: 22
+    - source: "@observed"
+      style: secondary
+      start: 25
+      end: 34
+    - source: // three
+      style: secondary
+      start: 46
+      end: 54
+    - source: // two
+      style: secondary
+      start: 37
+      end: 43
+    - source: |-
+        @observed
+          // two
+          // three
+          value = 1
+      style: secondary
+      start: 25
+      end: 66
+  "const probe = 1 // one\n// two\n// three\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 16
+      end: 22
+    - source: // three
+      style: secondary
+      start: 30
+      end: 38
+    - source: // two
+      style: secondary
+      start: 23
+      end: 29
+    - source: const probe = 1 // one
+      style: secondary
+      start: 0
+      end: 22
+  "if (ready) {\n  run();\n} // one\n// two\n// three\ndone();\n":
+    labels:
+    - source: // one
+      style: primary
+      start: 24
+      end: 30
+    - source: // three
+      style: secondary
+      start: 38
+      end: 46
+    - source: // two
+      style: secondary
+      start: 31
+      end: 37
+    - source: |-
+        if (ready) {
+          run();
+        } // one
+      style: secondary
+      start: 0
+      end: 30
+    - source: |-
+        {
+          run();
+        } // one
+      style: secondary
+      start: 11
+      end: 30

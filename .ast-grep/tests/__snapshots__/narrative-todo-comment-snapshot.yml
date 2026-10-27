@@ -1,0 +1,14 @@
+id: narrative-todo-comment
+snapshots:
+  "fn probe() {\n    // FIXME: this rounds the wrong way on ties.\n    let _ = 1;\n}\n":
+    labels:
+    - source: "// FIXME: this rounds the wrong way on ties."
+      style: primary
+      start: 17
+      end: 61
+  "fn probe() {\n    // TODO: drop the legacy tag path once the index is rebuilt.\n    let _ = 1;\n}\n":
+    labels:
+    - source: "// TODO: drop the legacy tag path once the index is rebuilt."
+      style: primary
+      start: 17
+      end: 77

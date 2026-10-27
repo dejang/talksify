@@ -1,0 +1,34 @@
+id: comment-max-two-lines-js
+valid:
+  - |
+    const probe = (
+      <div>
+        {/* one */}
+        {/* two */}
+      </div>
+    );
+  - |
+    const probe = (
+      <div>
+        {
+          // one
+        }
+        {/* two */}
+      </div>
+    );
+invalid:
+  - |
+    const probe = (
+      <div>
+        {/* one */}
+        {/* two */}
+        {/* three */}
+      </div>
+    );
+  - |
+    if (ready) {
+      run();
+    } // one
+    // two
+    // three
+    done();

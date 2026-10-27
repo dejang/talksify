@@ -1,0 +1,8 @@
+id: migration-sql
+snapshots:
+  "fn probe() {\n    let _ = \"ALTER TABLE Tracks ADD COLUMN bpm REAL\";\n}\n":
+    labels:
+    - source: ALTER TABLE Tracks ADD COLUMN bpm REAL
+      style: primary
+      start: 26
+      end: 64

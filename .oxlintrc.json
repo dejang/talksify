@@ -1,0 +1,48 @@
+{
+  // Pane is a browser app (Tauri webview) + React 19 component kit.
+  // Docs: https://oxc.rs/docs/guide/usage/linter/config.html
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+
+  // Setting plugins overwrites the default set (eslint, typescript, unicorn, oxc),
+  // so list everything we want: the defaults plus the React family.
+  "plugins": ["react", "react-perf", "jsx-a11y", "typescript", "unicorn", "oxc"],
+
+  "categories": {
+    // Code that is definitely wrong (includes react/rules-of-hooks, jsx-a11y correctness).
+    "correctness": "error",
+    // Code that is likely wrong (includes react/exhaustive-deps).
+    "suspicious": "error",
+    // Runtime performance (includes react-perf).
+    "perf": "warn"
+    // Deliberately off:
+    // - restriction  bans idiomatic patterns (no-ternary, no-null, id-length, no-rest-spread)
+    // - style/pedantic  pure style; oxfmt owns formatting, not lint
+    // - nursery      experimental, rules change between versions
+  },
+
+  // browser globals (document, window, …) + modern ES.
+  // Note: "builtin" only means ES globals — it does not cover DOM.
+  "env": { "browser": true, "es2021": true },
+
+  "settings": {
+    "react": {
+      "version": "19.0"
+    },
+    // Map kit components to the element they render, so jsx-a11y checks them.
+    // Add entries here as the kit grows (Button -> "button", …).
+    "jsx-a11y": {
+      "components": {
+        "TextField": "input"
+      }
+    }
+  },
+
+  "rules": {
+    // tsconfig uses the automatic JSX runtime ("jsx": "react-jsx") — no React import needed.
+    "react/react-in-jsx-scope": "off",
+    // Barrel files and icon data legitimately export non-components.
+    "react/only-export-components": ["off", { "allowConstantExport": true }]
+  },
+
+  "ignorePatterns": ["/scripts/*", "src-tauri/target", "dist"]
+}

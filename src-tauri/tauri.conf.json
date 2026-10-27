@@ -1,0 +1,57 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
+  "productName": "Talksify",
+  "version": "0.1.0",
+  "identifier": "com.talksify.app",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Talksify",
+        "width": 240,
+        "height": 48,
+        "visible": true,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "decorations": false,
+        "skipTaskbar": true,
+        "focus": false,
+        "resizable": false,
+        "center": true,
+        "y": 900
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "models/stt/*",
+      "models/qwen-0.6b/*",
+      "models/vad/*"
+    ],
+    "macOS": {
+      "infoPlist": "Info.plist",
+      "entitlements": "entitlements.plist",
+      "signingIdentity": "Apple Development: Dejan Gitin (7ZSRR5J247)",
+      "exceptionDomain": ""
+    },
+    "publisher": "Talksify",
+    "category": "public.app-category.productivity"
+  }
+}

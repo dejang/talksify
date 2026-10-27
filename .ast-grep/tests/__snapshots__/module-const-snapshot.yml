@@ -1,0 +1,14 @@
+id: module-const
+snapshots:
+  "const MAX_LOG_BYTES: usize = 5_000_000;\n":
+    labels:
+    - source: "const MAX_LOG_BYTES: usize = 5_000_000;"
+      style: primary
+      start: 0
+      end: 39
+  "pub(crate) const ROW_HEIGHT: f32 = 24.0;\n":
+    labels:
+    - source: "pub(crate) const ROW_HEIGHT: f32 = 24.0;"
+      style: primary
+      start: 0
+      end: 40

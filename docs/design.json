@@ -1,0 +1,1859 @@
+{
+  "format": "understudy.design/1",
+  "id": "local-whisperflow",
+  "title": "Talksify",
+  "revision": 226,
+  "parts": [
+    {
+      "id": "hotkey",
+      "kind": "module",
+      "name": "Hotkey Listener",
+      "confirmed": false,
+      "responsibility": "Detects the global hotkey to start/stop dictation.",
+      "operations": [
+        {
+          "id": "start",
+          "name": "Start Dictation",
+          "kind": "event",
+          "signature": "fn() -> Event<DictationStarted>",
+          "confirmed": false,
+          "draftedBy": "student"
+        },
+        {
+          "id": "stop",
+          "name": "Stop Dictation",
+          "kind": "event",
+          "signature": "fn() -> Event<DictationStopped>",
+          "confirmed": false,
+          "draftedBy": "student"
+        }
+      ],
+      "state": [
+        {
+          "id": "listening",
+          "name": "Listening",
+          "type": "enum",
+          "values": [
+            "idle",
+            "recording"
+          ],
+          "initial": "idle",
+          "durability": "memory",
+          "confirmed": false,
+          "draftedBy": "student"
+        }
+      ],
+      "transitions": [
+        {
+          "id": "start-recording",
+          "field": "listening",
+          "trigger": "hotkey.start",
+          "from": [
+            "idle"
+          ],
+          "to": "recording",
+          "confirmed": true
+        },
+        {
+          "id": "stop-recording",
+          "field": "listening",
+          "trigger": "hotkey.stop",
+          "from": [
+            "recording"
+          ],
+          "to": "idle",
+          "confirmed": true
+        }
+      ],
+      "failures": []
+    },
+    {
+      "id": "inject",
+      "kind": "module",
+      "name": "Text Injector",
+      "confirmed": false,
+      "draftedBy": "student",
+      "responsibility": "Types or pastes the final text into the focused application. Uses CGEvent (macOS) or xdotool/ydotool (Linux). Falls back to clipboard+paste.",
+      "operations": [
+        {
+          "id": "type_text",
+          "name": "Type Text",
+          "kind": "command",
+          "signature": "fn type_text(&self, text: &CleanText) -> Result<()>",
+          "confirmed": false,
+          "draftedBy": "student"
+        },
+        {
+          "id": "paste_text",
+          "name": "Paste via Clipboard",
+          "kind": "command",
+          "signature": "fn paste_text(&self, text: &CleanText) -> Result<()>",
+          "errors": [
+            "clipboard unavailable",
+            "focus lost"
+          ],
+          "confirmed": false,
+          "draftedBy": "student"
+        }
+      ],
+      "state": [],
+      "transitions": [],
+      "failures": []
+    },
+    {
+      "id": "config",
+      "kind": "store",
+      "name": "Configuration",
+      "confirmed": false,
+      "draftedBy": "student",
+      "responsibility": "Stores user settings: hotkey binding, model paths, LLM model name, audio device.",
+      "operations": [],
+      "state": [],
+      "transitions": [],
+      "failures": []
+    },
+    {
+      "id": "module-1",
+      "kind": "module",
+      "name": "Transcriber",
+      "confirmed": true,
+      "responsibility": "Runs one recording end to end. Its audio-consumer thread pulls the device's samples from AudioDevice's ring buffer, runs AudioProcessor (mono, 16 kHz), reports the audio level, and writes the audio into a per-recording ring buffer for the STT thread. On stop it joins that thread, flushes STT and runs the LLM on the raw transcript.",
+      "operations": [
+        {
+          "id": "op-1",
+          "kind": "command",
+          "signature": "fn start_transcribing(&mut self) -> Result<(), TranscriberError>",
+          "errors": [
+            "TranscriberError::Init"
+          ],
+          "confirmed": true
+        },
+        {
+          "id": "op-2",
+          "kind": "command",
+          "signature": "fn stop_transcribing(&mut self) -> Result<Transcript, TranscriberError>",
+          "errors": [
+            "TranscriberError::Stop"
+          ],
+          "confirmed": true
+        },
+        {
+          "id": "op-3",
+          "kind": "query",
+          "signature": "fn is_transcribing(&self) -> bool",
+          "confirmed": true
+        },
+        {
+          "id": "op-4",
+          "kind": "command",
+          "signature": "fn new(config: &Config, on_level: Arc<dyn Fn(f32) + Send + Sync>) -> Result<Self, TranscriberError>",
+          "confirmed": true
+        },
+        {
+          "id": "audio-level",
+          "name": "Audio level",
+          "kind": "event",
+          "signature": "on_level(level: f32)",
+          "post": [
+            "level is the mic loudness in 0..=1, about 20 times a second while recording"
+          ],
+          "confirmed": true
+        }
+      ],
+      "state": [
+        {
+          "id": "is_transcribing",
+          "type": "AtomicBool",
+          "confirmed": true
+        },
+        {
+          "id": "device",
+          "type": "JoinHandle<()>",
+          "confirmed": true
+        },
+        {
+          "id": "stt",
+          "type": "JoinHandle<()>",
+          "confirmed": true
+        },
+        {
+          "id": "raw_transcript",
+          "type": "Mutext<RawTranscript>",
+          "confirmed": true
+        },
+        {
+          "id": "llm_postprocessor",
+          "type": "JoinHandle<()>",
+          "confirmed": true
+        },
+        {
+          "id": "stt-audio",
+          "name": "STT audio buffer",
+          "type": "HeapProd<f32>",
+          "durability": "memory",
+          "invariants": [
+            "one ring buffer per recording, holding 10 s of 16 kHz audio",
+            "the STT thread drains it every 10 ms while recording, and fully on Flush"
+          ],
+          "confirmed": true
+        }
+      ],
+      "transitions": [],
+      "failures": [
+        {
+          "id": "unprocessable-format",
+          "trigger": "error",
+          "what": "The device's format can't be processed (AudioProcessor::new fails)",
+          "detectedBy": "audio-consumer thread when capture starts",
+          "recovery": {
+            "strategy": "fail",
+            "detail": "Stop capture, clear is_transcribing and log the format"
+          },
+          "confirmed": true
+        },
+        {
+          "id": "stt-behind",
+          "trigger": "exhausted",
+          "what": "The STT thread falls more than 10 s behind, so the STT audio buffer is full",
+          "detectedBy": "send_audio reports samples that did not fit",
+          "recovery": {
+            "strategy": "accept",
+            "detail": "Drop those samples and log how many when the recording stops"
+          },
+          "confirmed": true
+        }
+      ]
+    },
+    {
+      "id": "module-2",
+      "kind": "module",
+      "name": "AudioDevice",
+      "confirmed": true,
+      "responsibility": "Opens the capture device. Its real-time callback only scales each sample to f32 in -1..=1 and pushes the device's native interleaved samples into a ring buffer; nothing else runs there. Reports the native format (sample rate, channels).",
+      "operations": [
+        {
+          "id": "op-1",
+          "kind": "command",
+          "signature": "fn start_capture(&mut self) -> Result<HeapCons<f32>, AudioError>",
+          "confirmed": true
+        },
+        {
+          "id": "op-2",
+          "kind": "command",
+          "signature": "fn stop_capture(&mut self) -> Result<(), AudioError>",
+          "confirmed": true
+        },
+        {
+          "id": "op-3",
+          "name": "Input format",
+          "kind": "query",
+          "signature": "fn input_format(&self) -> Option<InputFormat>",
+          "confirmed": true
+        }
+      ],
+      "state": [
+        {
+          "id": "format",
+          "name": "Format",
+          "type": "Option<InputFormat>",
+          "durability": "memory",
+          "confirmed": true
+        }
+      ],
+      "transitions": [],
+      "failures": [
+        {
+          "id": "fail-1",
+          "trigger": "error",
+          "what": "We cannot acquire audio device at init",
+          "detectedBy": "",
+          "recovery": {
+            "strategy": "fail",
+            "detail": "Return an error"
+          },
+          "confirmed": true
+        }
+      ]
+    },
+    {
+      "id": "module-3",
+      "kind": "module",
+      "name": "ParakeetSTT",
+      "confirmed": true,
+      "responsibility": "Implements STT on the stt-warm thread. Silero VAD cuts the 16 kHz audio at pauses of at least 1 s (segments at most 20 s, with 0.3 s of pre-roll), and Parakeet transcribes each segment for the subscriber. Must be spawned in a thread.",
+      "operations": [
+        {
+          "id": "op-1",
+          "kind": "command",
+          "signature": "push_audio(&mut self, audio: &[f32])",
+          "confirmed": true
+        },
+        {
+          "id": "op-2",
+          "name": "Sample rate",
+          "kind": "query",
+          "signature": "fn sample_rate(&self) -> u32",
+          "confirmed": true
+        }
+      ],
+      "state": [
+        {
+          "id": "scratch_buffer",
+          "type": "Vec<f32>",
+          "confirmed": true
+        },
+        {
+          "id": "vad",
+          "name": "VAD",
+          "type": "VoiceActivityDetector",
+          "durability": "memory",
+          "confirmed": true
+        }
+      ],
+      "transitions": [],
+      "failures": []
+    },
+    {
+      "id": "contract-1",
+      "kind": "contract",
+      "name": "STT",
+      "confirmed": true,
+      "responsibility": "Speech to text over 16 kHz mono f32 audio, delivered in segments to one subscriber.",
+      "operations": [
+        {
+          "id": "op-1",
+          "kind": "command",
+          "signature": "fn push_audio(&mut self, audio: &[f32])",
+          "confirmed": true
+        },
+        {
+          "id": "op-2",
+          "kind": "command",
+          "signature": "fn subscribe(&mut self, on_transcribe: Box<dyn Fn(String) + Send>)",
+          "confirmed": true
+        },
+        {
+          "id": "op-3",
+          "name": "Flush",
+          "kind": "command",
+          "signature": "fn flush(&mut self)",
+          "post": [
+            "all pushed audio has been transcribed and delivered"
+          ],
+          "confirmed": true
+        }
+      ],
+      "state": [],
+      "transitions": [],
+      "failures": []
+    },
+    {
+      "id": "module-4",
+      "kind": "module",
+      "name": "RawTranscript",
+      "confirmed": true,
+      "responsibility": "Holds the transcript sentences",
+      "operations": [
+        {
+          "id": "op-1",
+          "kind": "command",
+          "signature": "fn push_words(&mut self, words: String)",
+          "confirmed": true
+        }
+      ],
+      "state": [
+        {
+          "id": "sentences",
+          "type": "Vec<String>",
+          "confirmed": true
+        }
+      ],
+      "transitions": [],
+      "failures": []
+    },
+    {
+      "id": "module-5",
+      "kind": "module",
+      "name": "LLM PostProcessor",
+      "confirmed": true,
+      "responsibility": "The LLM PostProcessor incorporates the model running on mistral-rs. We'll prompt and wait for the response.",
+      "operations": [
+        {
+          "id": "op-1",
+          "kind": "command",
+          "signature": "fn clean_transcript(raw: RawTranscript)",
+          "confirmed": true
+        }
+      ],
+      "state": [],
+      "transitions": [],
+      "failures": []
+    },
+    {
+      "id": "module-6",
+      "kind": "module",
+      "name": "Event Handler",
+      "confirmed": true,
+      "responsibility": "",
+      "operations": [],
+      "state": [],
+      "transitions": [],
+      "failures": []
+    },
+    {
+      "id": "audio-processor",
+      "kind": "module",
+      "name": "AudioProcessor",
+      "confirmed": true,
+      "code": {
+        "path": "src-tauri/src/audio_device.rs",
+        "symbol": "AudioProcessor",
+        "language": "rust"
+      },
+      "responsibility": "Turns the device's interleaved samples into mono at the STT rate (16 kHz): averages the channels and resamples with rubato. All buffers are allocated in new, so process never allocates. Runs on Transcriber's audio-consumer thread, never in the real-time callback.",
+      "operations": [
+        {
+          "id": "new",
+          "name": "New",
+          "kind": "command",
+          "signature": "fn new(format: InputFormat, output_rate: u32, max_block: usize) -> Option<Self>",
+          "confirmed": true
+        },
+        {
+          "id": "process",
+          "name": "Process",
+          "kind": "command",
+          "signature": "fn process(&mut self, interleaved: &[f32]) -> &[f32]",
+          "pre": [
+            "interleaved holds at most max_block samples"
+          ],
+          "post": [
+            "returns the resampled audio that became ready; a frame may span calls"
+          ],
+          "confirmed": true
+        },
+        {
+          "id": "finish",
+          "name": "Finish",
+          "kind": "command",
+          "signature": "fn finish(&mut self) -> &[f32]",
+          "post": [
+            "returns the audio still held by the resampler and resets for the next recording"
+          ],
+          "confirmed": true
+        }
+      ],
+      "state": [
+        {
+          "id": "pending",
+          "name": "Pending",
+          "type": "Vec<f32>",
+          "durability": "memory",
+          "invariants": [
+            "capacity is set in new and never grows"
+          ],
+          "confirmed": true
+        }
+      ],
+      "transitions": [],
+      "failures": []
+    }
+  ],
+  "boundaries": [
+    {
+      "id": "tauri-app",
+      "kind": "process",
+      "name": "Tauri App Process",
+      "runsAs": "single process",
+      "contains": [
+        "hotkey",
+        "inject",
+        "config",
+        "module-6"
+      ],
+      "confirmed": false
+    },
+    {
+      "id": "boundary-1",
+      "kind": "code",
+      "name": "Transcriber",
+      "contains": [
+        "module-1",
+        "module-2",
+        "contract-1",
+        "module-3",
+        "module-4",
+        "module-5",
+        "module-6",
+        "audio-processor"
+      ],
+      "confirmed": true
+    }
+  ],
+  "connections": [
+    {
+      "id": "connection-2",
+      "from": "module-1",
+      "to": "module-2",
+      "kind": "call",
+      "operations": [
+        "module-2.op-1",
+        "module-2.op-2"
+      ],
+      "failures": [],
+      "confirmed": true
+    },
+    {
+      "id": "connection-3",
+      "from": "contract-1",
+      "to": "module-3",
+      "kind": "call",
+      "operations": [
+        "module-3.op-1"
+      ],
+      "failures": [],
+      "confirmed": true
+    },
+    {
+      "id": "connection-4",
+      "from": "module-1",
+      "to": "contract-1",
+      "kind": "call",
+      "operations": [
+        "contract-1.op-1",
+        "contract-1.op-2",
+        "contract-1.op-3"
+      ],
+      "guarantees": {
+        "notes": "Audio reaches the STT thread through the per-recording ring buffer, and that thread calls push_audio. Flush is sent only after the audio-consumer thread has been joined, so all audio is drained first."
+      },
+      "failures": [],
+      "confirmed": true
+    },
+    {
+      "id": "connection-5",
+      "from": "module-1",
+      "to": "module-4",
+      "kind": "call",
+      "operations": [
+        "module-4.op-1"
+      ],
+      "failures": [],
+      "confirmed": true
+    },
+    {
+      "id": "connection-6",
+      "from": "module-1",
+      "to": "module-5",
+      "kind": "call",
+      "operations": [
+        "module-5.op-1"
+      ],
+      "failures": [],
+      "confirmed": true
+    },
+    {
+      "id": "connection-1",
+      "from": "hotkey",
+      "to": "module-6",
+      "kind": "emit",
+      "operations": [
+        "hotkey.start",
+        "hotkey.stop"
+      ],
+      "failures": [],
+      "confirmed": true
+    },
+    {
+      "id": "connection-7",
+      "from": "module-6",
+      "to": "module-1",
+      "kind": "call",
+      "operations": [
+        "module-1.op-1",
+        "module-1.op-2"
+      ],
+      "failures": [],
+      "confirmed": true
+    },
+    {
+      "id": "connection-8",
+      "from": "module-6",
+      "to": "inject",
+      "kind": "call",
+      "operations": [
+        "inject.type_text"
+      ],
+      "failures": [],
+      "confirmed": true
+    },
+    {
+      "id": "connection-9",
+      "from": "module-1",
+      "to": "audio-processor",
+      "kind": "call",
+      "operations": [
+        "audio-processor.process",
+        "audio-processor.finish"
+      ],
+      "failures": [],
+      "confirmed": true
+    }
+  ],
+  "tests": [
+    {
+      "id": "happy-path",
+      "name": "Happy path: speak and inject",
+      "scope": "system",
+      "given": {
+        "state": {
+          "hotkey.listening": "idle"
+        },
+        "notes": "App is running, models loaded, user focused a text field"
+      },
+      "steps": [
+        {
+          "id": "s1",
+          "via": "connection-1",
+          "operation": "hotkey.start",
+          "does": "User presses Ctrl+Alt+Space and says \"Send the report to Anna\"",
+          "expect": [
+            {
+              "field": "hotkey.listening",
+              "from": "idle",
+              "to": "recording"
+            }
+          ]
+        },
+        {
+          "id": "s2",
+          "via": "connection-7",
+          "operation": "module-1.op-1",
+          "does": "Event Handler calls start_transcribing; the STT thread receives a new 10 s ring buffer",
+          "returns": "Ok(())",
+          "expect": [
+            {
+              "field": "module-1.is_transcribing",
+              "from": "false",
+              "to": "true"
+            }
+          ]
+        },
+        {
+          "id": "s3",
+          "via": "connection-2",
+          "operation": "module-2.op-1",
+          "does": "The audio-consumer thread opens the mic; the callback only scales 48 kHz mono samples into AudioDevice's ring buffer",
+          "returns": "HeapCons<f32>"
+        },
+        {
+          "id": "s4",
+          "via": "connection-9",
+          "operation": "audio-processor.process",
+          "does": "Each 480-sample block becomes 160 samples at 16 kHz, written to the STT ring buffer; on_level reports about 0.7 while the user speaks",
+          "returns": "&[f32] of 160 samples"
+        },
+        {
+          "id": "s5",
+          "via": "connection-4",
+          "operation": "contract-1.op-1",
+          "does": "Every 10 ms the STT thread drains the ring buffer into push_audio; VAD holds the speech as one open segment"
+        },
+        {
+          "id": "s6",
+          "via": "connection-1",
+          "operation": "hotkey.stop",
+          "does": "User presses Ctrl+Alt+Space again",
+          "expect": [
+            {
+              "field": "hotkey.listening",
+              "from": "recording",
+              "to": "idle"
+            }
+          ]
+        },
+        {
+          "id": "s7",
+          "via": "connection-7",
+          "operation": "module-1.op-2",
+          "does": "Event Handler calls stop_transcribing; is_transcribing clears and Transcriber joins the audio-consumer thread",
+          "expect": [
+            {
+              "field": "module-1.is_transcribing",
+              "from": "true",
+              "to": "false"
+            }
+          ]
+        },
+        {
+          "id": "s8",
+          "via": "connection-9",
+          "operation": "audio-processor.finish",
+          "does": "Before exiting, the audio-consumer thread writes the resampler's tail into the STT ring buffer"
+        },
+        {
+          "id": "s9",
+          "via": "connection-4",
+          "operation": "contract-1.op-3",
+          "does": "Transcriber sends Flush; the STT thread drains what is left in the ring buffer, then flushes"
+        },
+        {
+          "id": "s10",
+          "via": "connection-3",
+          "does": "VAD closes the open segment and Parakeet transcribes it",
+          "returns": "\"Send the report to Anna.\""
+        },
+        {
+          "id": "s11",
+          "via": "connection-5",
+          "operation": "module-4.op-1",
+          "does": "The STT subscriber appends \"Send the report to Anna.\" to the raw transcript"
+        },
+        {
+          "id": "s12",
+          "via": "connection-6",
+          "operation": "module-5.op-1",
+          "does": "clean_transcript keeps every word and fixes punctuation",
+          "returns": "\"Send the report to Anna.\""
+        },
+        {
+          "id": "s13",
+          "via": "connection-8",
+          "operation": "inject.type_text",
+          "does": "Event Handler types \"Send the report to Anna.\" into the focused text field",
+          "returns": "Ok(())"
+        }
+      ],
+      "then": [
+        "Clean text appears in the focused application",
+        "Overlay shows done then hides"
+      ],
+      "covers": [
+        "module-1.op-1",
+        "module-1.op-2",
+        "module-2.op-1",
+        "audio-processor.process",
+        "audio-processor.finish",
+        "contract-1.op-1",
+        "contract-1.op-3",
+        "module-5.op-1",
+        "inject.type_text"
+      ],
+      "confirmed": true
+    }
+  ],
+  "questions": [
+    {
+      "id": "q1",
+      "number": 1,
+      "askedBy": "student",
+      "text": "What does WhisperFlow do? (a few sentences — what the user does, what happens, what comes out)",
+      "why": "I need the core flow to know what we're replicating locally.",
+      "options": [
+        "I'll describe it",
+        "It's a public project I can link"
+      ],
+      "status": "answered",
+      "answer": {
+        "text": "It's a public project I can link",
+        "by": "user"
+      }
+    },
+    {
+      "id": "q2",
+      "number": 2,
+      "askedBy": "student",
+      "text": "When you say \"running all locally\" — what does that mean to you?",
+      "why": "It could mean no cloud API calls, self-hosted on your own server, or fully offline on one machine.",
+      "options": [
+        "No cloud APIs (local models)",
+        "Self-hosted on my own server",
+        "Fully offline, single machine"
+      ],
+      "status": "answered",
+      "answer": {
+        "text": "No cloud APIs (local models)",
+        "by": "user"
+      }
+    },
+    {
+      "id": "q3",
+      "number": 3,
+      "askedBy": "student",
+      "text": "What's the link? (GitHub repo, website, etc.)",
+      "why": "I'll read it to understand the flow before we design the local version.",
+      "status": "answered",
+      "answer": {
+        "text": "https://wisprflow.ai/",
+        "by": "user"
+      }
+    },
+    {
+      "id": "q4",
+      "number": 4,
+      "about": "stt",
+      "askedBy": "student",
+      "text": "Which local STT engine are you thinking?",
+      "why": "Determines latency, accuracy, and resource requirements.",
+      "options": [
+        "whisper.cpp (C++, fast)",
+        "faster-whisper (Python, CTranslate2)",
+        "whisper.cpp with streaming (real-time)",
+        "OpenAI Whisper (PyTorch)"
+      ],
+      "status": "withdrawn",
+      "answer": {
+        "text": "Nvidia Parakeet",
+        "by": "user"
+      }
+    },
+    {
+      "id": "q5",
+      "number": 5,
+      "about": "postprocess",
+      "askedBy": "student",
+      "text": "For the LLM post-processing step, what do you have in mind?",
+      "why": "A small local model can clean text but quality varies; this affects which model and how much cleanup to expect.",
+      "options": [
+        "Small model (qwen2.5:1.5b or similar)",
+        "Medium model (llama3.1:8b)",
+        "Skip LLM cleanup (just STT output)",
+        "Configurable — user picks"
+      ],
+      "status": "withdrawn",
+      "answer": {
+        "text": "Small model (qwen2.5:1.5b or similar)",
+        "by": "user"
+      }
+    },
+    {
+      "id": "q6",
+      "number": 6,
+      "askedBy": "student",
+      "text": "What platform is this for?",
+      "why": "Hotkey handling and text injection are very different on macOS vs Linux vs cross-platform.",
+      "options": [
+        "macOS only",
+        "Linux only",
+        "Cross-platform (macOS + Linux)"
+      ],
+      "status": "answered",
+      "answer": {
+        "text": "Cross-platform (macOS + Linux)",
+        "by": "user"
+      }
+    },
+    {
+      "id": "q7",
+      "number": 7,
+      "askedBy": "student",
+      "text": "What language/runtime are you thinking for the app itself?",
+      "why": "Affects which libraries are available for hotkey, audio, and text injection.",
+      "options": [
+        "Rust",
+        "Swift (macOS)",
+        "Python",
+        "Go",
+        "TypeScript/Electron"
+      ],
+      "status": "answered",
+      "answer": {
+        "text": "Rust",
+        "by": "user"
+      }
+    },
+    {
+      "id": "q8",
+      "number": 8,
+      "about": "stt",
+      "askedBy": "student",
+      "text": "How should Parakeet integrate with the Rust app?",
+      "why": "Parakeet is from NVIDIA NeMo (Python). Options: sherpa-onnx (Rust bindings, ONNX runtime), or a Python sidecar process.",
+      "options": [
+        "sherpa-onnx (Rust crate, ONNX runtime)",
+        "Python sidecar (NeMo in a subprocess)",
+        "Other approach"
+      ],
+      "status": "withdrawn",
+      "answer": {
+        "text": "sherpa-onnx (Rust crate, ONNX runtime)",
+        "by": "user"
+      }
+    },
+    {
+      "id": "q9",
+      "number": 9,
+      "about": "postprocess",
+      "askedBy": "student",
+      "text": "How should the LLM connect?",
+      "why": "Ollama exposes a local HTTP API; llama.cpp has Rust FFI bindings.",
+      "options": [
+        "Ollama (HTTP on localhost)",
+        "llama.cpp via Rust FFI",
+        "llama.cpp as sidecar process"
+      ],
+      "status": "withdrawn",
+      "answer": {
+        "text": "we can use mistral-rs, it's a small model and only needs to do inference",
+        "by": "user"
+      }
+    },
+    {
+      "id": "q10",
+      "number": 10,
+      "about": "stt",
+      "askedBy": "student",
+      "text": "Should transcription stream partial results while speaking, or wait until you stop?",
+      "why": "Streaming gives live feedback but adds complexity; batch is simpler and Parakeet is fast.",
+      "options": [
+        "Batch (transcribe after stop)",
+        "Streaming (partial text while speaking)"
+      ],
+      "status": "withdrawn",
+      "answer": {
+        "text": "partial text while speaking, call LLM only with final text",
+        "by": "user"
+      }
+    },
+    {
+      "id": "q11",
+      "number": 11,
+      "about": "feedback",
+      "askedBy": "student",
+      "text": "How should the user see feedback (recording, processing, done)?",
+      "why": "Affects which UI libraries we need and how complex the overlay is.",
+      "options": [
+        "Floating overlay window (always-on-top HUD)",
+        "System tray icon with color change",
+        "Sound cues only (beep start/stop)",
+        "Combination (overlay + sound)"
+      ],
+      "status": "withdrawn",
+      "answer": {
+        "text": "Floating overlay window (always-on-top HUD)",
+        "by": "user"
+      }
+    },
+    {
+      "id": "q12",
+      "number": 12,
+      "about": "hotkey",
+      "askedBy": "student",
+      "text": "Any preference for the global hotkey library?",
+      "why": "Rust options: device-query (simple), rdev (low-level), or tauri-plugin-global-shortcut (if using Tauri for overlay).",
+      "options": [
+        "device-query",
+        "rdev",
+        "tauri-plugin-global-shortcut (if Tauri for UI)"
+      ],
+      "status": "answered",
+      "answer": {
+        "text": "tauri-plugin-global-shortcut (if Tauri for UI)",
+        "by": "user"
+      }
+    },
+    {
+      "id": "q13",
+      "number": 13,
+      "about": "inject",
+      "askedBy": "student",
+      "text": "For text injection, which approach do you prefer?",
+      "why": "Simulated keystrokes are universal but slow for long text; clipboard+paste is fast but clobbers the clipboard; CGEvent/xdotool is fast but platform-specific.",
+      "options": [
+        "Simulated keystrokes (slow but universal)",
+        "Clipboard + Cmd/Ctrl+V (fast, restores clipboard after)",
+        "Platform-native (CGEvent on macOS, xdotool on Linux)",
+        "Clipboard + paste as default, keystrokes as fallback"
+      ],
+      "status": "answered",
+      "answer": {
+        "text": "Platform-native (CGEvent on macOS, xdotool on Linux)",
+        "by": "user"
+      }
+    },
+    {
+      "id": "q14",
+      "number": 14,
+      "askedBy": "student",
+      "text": "Should the app auto-start on login?",
+      "why": "Affects whether we need a launch agent (macOS) or systemd user service (Linux).",
+      "options": [
+        "Yes, auto-start",
+        "No, manual launch only",
+        "Configurable (default on)"
+      ],
+      "status": "answered",
+      "answer": {
+        "text": "Yes, auto-start",
+        "by": "user"
+      }
+    },
+    {
+      "id": "q15",
+      "number": 15,
+      "askedBy": "student",
+      "text": "Which failure scenarios should we design recovery for first?",
+      "why": "Every failure needs a strategy; these are the most likely ones for a local dictation app.",
+      "options": [
+        "Mic unavailable / no permission",
+        "STT model fails to load or crashes",
+        "LLM produces garbage or times out",
+        "Text injection fails (no accessibility permission on macOS)",
+        "All of the above"
+      ],
+      "status": "parked"
+    },
+    {
+      "id": "q16",
+      "number": 16,
+      "about": "inject",
+      "askedBy": "student",
+      "text": "If text injection fails (e.g. accessibility permission denied), what should happen?",
+      "why": "The user spoke something — losing it is the worst outcome.",
+      "options": [
+        "Copy to clipboard + notify user to paste manually",
+        "Show text in overlay for manual copy",
+        "Retry with clipboard+paste fallback",
+        "Show error and discard"
+      ],
+      "status": "parked"
+    },
+    {
+      "id": "q17",
+      "number": 17,
+      "about": "module-1",
+      "askedBy": "student",
+      "text": "What goes in this module?",
+      "why": "I see you added it — want me to help fill it in, or are you sketching something?",
+      "status": "parked"
+    },
+    {
+      "id": "q18",
+      "number": 18,
+      "about": "module-1",
+      "askedBy": "student",
+      "text": "Does Transcriber replace both the `capture` and `stt` parts, or does it wrap them?",
+      "why": "If Transcriber owns audio + STT internally, the top-level capture and stt parts become implementation details inside it.",
+      "options": [
+        "Transcriber replaces capture + stt (they become internal)",
+        "Transcriber wraps them (they stay as separate parts it calls)",
+        "Transcriber is just the STT part renamed"
+      ],
+      "status": "withdrawn"
+    },
+    {
+      "id": "q19",
+      "number": 19,
+      "about": "module-1",
+      "askedBy": "student",
+      "text": "Should I remove the `stt` part and route through Transcriber, or does Transcriber call `stt` internally (stt stays as a separate part)?",
+      "why": "Right now both exist — Transcriber and stt. One should own the STT logic.",
+      "options": [
+        "Remove stt — Transcriber owns it internally",
+        "Keep stt — Transcriber calls it (stt is the sherpa-onnx wrapper)"
+      ],
+      "status": "answered",
+      "answer": {
+        "text": "Remove stt — Transcriber owns it internally",
+        "by": "user"
+      }
+    },
+    {
+      "id": "q20",
+      "number": 20,
+      "about": "module-1",
+      "askedBy": "student",
+      "text": "Who calls `push_audio` on the STT trait?",
+      "why": "Determines whether Transcriber is a middleman or AudioDevice talks to STT directly.",
+      "options": [
+        "Transcriber pulls from HeapCons, pushes to STT",
+        "AudioDevice pushes directly to STT (holds a trait object)"
+      ],
+      "status": "answered",
+      "answer": {
+        "text": "Transcriber pulls from HeapCons, pushes to STT",
+        "by": "user"
+      }
+    }
+  ],
+  "proposals": [
+    {
+      "id": "p1",
+      "by": "student",
+      "question": "q18",
+      "status": "discarded",
+      "changes": [
+        {
+          "op": "remove",
+          "path": "parts/capture"
+        },
+        {
+          "op": "remove",
+          "path": "parts/stt"
+        },
+        {
+          "op": "remove",
+          "path": "tests/happy-path"
+        },
+        {
+          "op": "set",
+          "path": "parts/hotkey/transitions/t1/trigger",
+          "value": "module-1.op-1"
+        },
+        {
+          "op": "set",
+          "path": "parts/hotkey/transitions/t2/trigger",
+          "value": "module-1.op-1"
+        },
+        {
+          "op": "add",
+          "path": "connections/hotkey-transcriber",
+          "value": {
+            "id": "hotkey-transcriber",
+            "from": "hotkey",
+            "to": "module-1",
+            "kind": "call",
+            "operations": [
+              "module-1.op-1"
+            ],
+            "confirmed": false,
+            "failures": []
+          }
+        },
+        {
+          "op": "add",
+          "path": "connections/transcriber-postprocess",
+          "value": {
+            "id": "transcriber-postprocess",
+            "from": "module-1",
+            "to": "postprocess",
+            "kind": "call",
+            "operations": [
+              "postprocess.clean"
+            ],
+            "confirmed": false,
+            "failures": []
+          }
+        },
+        {
+          "op": "add",
+          "path": "connections/transcriber-feedback",
+          "value": {
+            "id": "transcriber-feedback",
+            "from": "module-1",
+            "to": "feedback",
+            "kind": "call",
+            "operations": [
+              "feedback.show"
+            ],
+            "guarantees": {
+              "notes": "Partial transcripts update overlay in real-time"
+            },
+            "confirmed": false,
+            "failures": []
+          }
+        },
+        {
+          "op": "set",
+          "path": "boundaries/tauri-app/contains",
+          "value": [
+            "hotkey",
+            "feedback",
+            "module-1",
+            "module-2",
+            "postprocess",
+            "inject",
+            "config"
+          ]
+        },
+        {
+          "op": "add",
+          "path": "tests/happy-path",
+          "value": {
+            "id": "happy-path",
+            "name": "Happy path: speak and inject",
+            "scope": "system",
+            "confirmed": false,
+            "given": {
+              "state": {
+                "hotkey.listening": "idle",
+                "module-1.is_transcribing": "false",
+                "feedback.phase": "hidden"
+              },
+              "notes": "App is running, models loaded, user focused a text field"
+            },
+            "steps": [
+              {
+                "id": "s1",
+                "via": "hotkey-transcriber",
+                "operation": "module-1.op-1",
+                "does": "User presses global hotkey; Transcriber starts (opens mic, begins STT stream)",
+                "expect": [
+                  {
+                    "field": "module-1.is_transcribing",
+                    "from": "false",
+                    "to": "true"
+                  }
+                ]
+              },
+              {
+                "id": "s2",
+                "via": "transcriber-postprocess",
+                "operation": "postprocess.clean",
+                "does": "User stops; final transcript sent to LLM for cleanup",
+                "expect": []
+              },
+              {
+                "id": "s3",
+                "via": "postprocess-inject",
+                "operation": "inject.type_text",
+                "does": "Clean text typed into focused app via CGEvent/xdotool",
+                "expect": []
+              }
+            ],
+            "then": [
+              "Clean text appears in the focused application",
+              "Overlay shows done then hides"
+            ],
+            "covers": [
+              "module-1.op-1",
+              "postprocess.clean",
+              "inject.type_text"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "p2",
+      "by": "student",
+      "question": "q19",
+      "status": "discarded",
+      "changes": [
+        {
+          "op": "remove",
+          "path": "parts/stt"
+        },
+        {
+          "op": "remove",
+          "path": "tests/happy-path"
+        },
+        {
+          "op": "set",
+          "path": "connections/connection-1/operations",
+          "value": [
+            "module-1.op-1"
+          ]
+        },
+        {
+          "op": "add",
+          "path": "connections/transcriber-postprocess",
+          "value": {
+            "id": "transcriber-postprocess",
+            "from": "module-1",
+            "to": "postprocess",
+            "kind": "call",
+            "operations": [
+              "postprocess.clean"
+            ],
+            "confirmed": false,
+            "failures": []
+          }
+        },
+        {
+          "op": "add",
+          "path": "connections/transcriber-feedback",
+          "value": {
+            "id": "transcriber-feedback",
+            "from": "module-1",
+            "to": "feedback",
+            "kind": "call",
+            "operations": [
+              "feedback.show"
+            ],
+            "guarantees": {
+              "notes": "Partial transcripts update overlay"
+            },
+            "confirmed": false,
+            "failures": []
+          }
+        },
+        {
+          "op": "set",
+          "path": "boundaries/tauri-app/contains",
+          "value": [
+            "hotkey",
+            "feedback",
+            "module-1",
+            "module-2",
+            "postprocess",
+            "inject",
+            "config"
+          ]
+        },
+        {
+          "op": "add",
+          "path": "tests/happy-path",
+          "value": {
+            "id": "happy-path",
+            "name": "Happy path: speak and inject",
+            "scope": "system",
+            "confirmed": false,
+            "given": {
+              "state": {
+                "hotkey.listening": "idle",
+                "feedback.phase": "hidden"
+              },
+              "notes": "App running, models loaded, user focused a text field"
+            },
+            "steps": [
+              {
+                "id": "s1",
+                "via": "connection-1",
+                "operation": "module-1.op-1",
+                "does": "User presses hotkey; Transcriber starts (opens mic via AudioDevice, begins Parakeet stream)",
+                "expect": []
+              },
+              {
+                "id": "s2",
+                "via": "transcriber-postprocess",
+                "operation": "postprocess.clean",
+                "does": "User stops; final transcript sent to LLM for cleanup",
+                "expect": []
+              },
+              {
+                "id": "s3",
+                "via": "postprocess-inject",
+                "operation": "inject.type_text",
+                "does": "Clean text typed into focused app via CGEvent/xdotool",
+                "expect": []
+              }
+            ],
+            "then": [
+              "Clean text appears in the focused application",
+              "Overlay shows done then hides"
+            ],
+            "covers": [
+              "module-1.op-1",
+              "postprocess.clean",
+              "inject.type_text"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "p3",
+      "by": "student",
+      "status": "accepted",
+      "changes": [
+        {
+          "op": "set",
+          "path": "parts/module-1/responsibility",
+          "value": "Runs one recording end to end. Its audio-consumer thread pulls the device's samples from AudioDevice's ring buffer, runs AudioProcessor (mono, 16 kHz), reports the audio level, and writes the audio into a per-recording ring buffer for the STT thread. On stop it joins that thread, flushes STT and runs the LLM on the raw transcript."
+        },
+        {
+          "op": "set",
+          "path": "parts/module-1/operations/op-4",
+          "value": {
+            "id": "op-4",
+            "kind": "command",
+            "signature": "fn new(config: &Config, on_level: Arc<dyn Fn(f32) + Send + Sync>) -> Result<Self, TranscriberError>",
+            "confirmed": false
+          }
+        },
+        {
+          "op": "add",
+          "path": "parts/module-1/operations/audio-level",
+          "value": {
+            "id": "audio-level",
+            "name": "Audio level",
+            "kind": "event",
+            "signature": "on_level(level: f32)",
+            "post": [
+              "level is the mic loudness in 0..=1, about 20 times a second while recording"
+            ],
+            "confirmed": false
+          }
+        },
+        {
+          "op": "add",
+          "path": "parts/module-1/state/stt-audio",
+          "value": {
+            "id": "stt-audio",
+            "name": "STT audio buffer",
+            "type": "HeapProd<f32>",
+            "durability": "memory",
+            "invariants": [
+              "one ring buffer per recording, holding 10 s of 16 kHz audio",
+              "the STT thread drains it every 10 ms while recording, and fully on Flush"
+            ],
+            "confirmed": false
+          }
+        },
+        {
+          "op": "add",
+          "path": "parts/module-1/failures/unprocessable-format",
+          "value": {
+            "id": "unprocessable-format",
+            "trigger": "error",
+            "what": "The device's format can't be processed (AudioProcessor::new fails)",
+            "detectedBy": "audio-consumer thread when capture starts",
+            "recovery": {
+              "strategy": "fail",
+              "detail": "Stop capture, clear is_transcribing and log the format"
+            },
+            "confirmed": false
+          }
+        },
+        {
+          "op": "add",
+          "path": "parts/module-1/failures/stt-behind",
+          "value": {
+            "id": "stt-behind",
+            "trigger": "exhausted",
+            "what": "The STT thread falls more than 10 s behind, so the STT audio buffer is full",
+            "detectedBy": "send_audio reports samples that did not fit",
+            "recovery": {
+              "strategy": "accept",
+              "detail": "Drop those samples and log how many when the recording stops"
+            },
+            "confirmed": false
+          }
+        },
+        {
+          "op": "set",
+          "path": "connections/connection-4/guarantees",
+          "value": {
+            "notes": "Audio reaches the STT thread through the per-recording ring buffer, and that thread calls push_audio. Flush is sent only after the audio-consumer thread has been joined, so all audio is drained first."
+          }
+        }
+      ],
+      "acceptedAt": 218
+    },
+    {
+      "id": "p4",
+      "by": "student",
+      "status": "accepted",
+      "changes": [
+        {
+          "op": "set",
+          "path": "parts/module-2/responsibility",
+          "value": "Opens the capture device. Its real-time callback only scales each sample to f32 in -1..=1 and pushes the device's native interleaved samples into a ring buffer; nothing else runs there. Reports the native format (sample rate, channels)."
+        },
+        {
+          "op": "add",
+          "path": "parts/module-2/operations/op-3",
+          "value": {
+            "id": "op-3",
+            "name": "Input format",
+            "kind": "query",
+            "signature": "fn input_format(&self) -> Option<InputFormat>",
+            "confirmed": false
+          }
+        },
+        {
+          "op": "remove",
+          "path": "parts/module-2/state/producer"
+        },
+        {
+          "op": "add",
+          "path": "parts/module-2/state/format",
+          "value": {
+            "id": "format",
+            "name": "Format",
+            "type": "Option<InputFormat>",
+            "durability": "memory",
+            "confirmed": false
+          }
+        }
+      ],
+      "acceptedAt": 219
+    },
+    {
+      "id": "p5",
+      "by": "student",
+      "status": "accepted",
+      "changes": [
+        {
+          "op": "set",
+          "path": "parts/contract-1/responsibility",
+          "value": "Speech to text over 16 kHz mono f32 audio, delivered in segments to one subscriber."
+        },
+        {
+          "op": "set",
+          "path": "parts/contract-1/operations/op-2/signature",
+          "value": "fn subscribe(&mut self, on_transcribe: Box<dyn Fn(String) + Send>)"
+        },
+        {
+          "op": "add",
+          "path": "parts/contract-1/operations/op-3",
+          "value": {
+            "id": "op-3",
+            "name": "Flush",
+            "kind": "command",
+            "signature": "fn flush(&mut self)",
+            "post": [
+              "all pushed audio has been transcribed and delivered"
+            ],
+            "confirmed": false
+          }
+        },
+        {
+          "op": "set",
+          "path": "parts/module-3/responsibility",
+          "value": "Implements STT on the stt-warm thread. Silero VAD cuts the 16 kHz audio at pauses of at least 1 s (segments at most 20 s, with 0.3 s of pre-roll), and Parakeet transcribes each segment for the subscriber. Must be spawned in a thread."
+        },
+        {
+          "op": "add",
+          "path": "parts/module-3/operations/op-2",
+          "value": {
+            "id": "op-2",
+            "name": "Sample rate",
+            "kind": "query",
+            "signature": "fn sample_rate(&self) -> u32",
+            "confirmed": false
+          }
+        },
+        {
+          "op": "add",
+          "path": "parts/module-3/state/vad",
+          "value": {
+            "id": "vad",
+            "name": "VAD",
+            "type": "VoiceActivityDetector",
+            "durability": "memory",
+            "confirmed": false
+          }
+        }
+      ],
+      "acceptedAt": 220
+    },
+    {
+      "id": "p6",
+      "by": "student",
+      "status": "accepted",
+      "changes": [
+        {
+          "op": "set",
+          "path": "boundaries/boundary-1/contains",
+          "value": [
+            "module-1",
+            "module-2",
+            "contract-1",
+            "module-3",
+            "module-4",
+            "module-5",
+            "module-6",
+            "audio-processor"
+          ]
+        }
+      ],
+      "acceptedAt": 221
+    },
+    {
+      "id": "p7",
+      "by": "student",
+      "status": "accepted",
+      "changes": [
+        {
+          "op": "set",
+          "path": "connections/connection-1/kind",
+          "value": "emit"
+        },
+        {
+          "op": "set",
+          "path": "connections/connection-1/operations",
+          "value": [
+            "hotkey.start",
+            "hotkey.stop"
+          ]
+        },
+        {
+          "op": "set",
+          "path": "connections/connection-7/operations",
+          "value": [
+            "module-1.op-1",
+            "module-1.op-2"
+          ]
+        },
+        {
+          "op": "set",
+          "path": "connections/connection-2/operations",
+          "value": [
+            "module-2.op-1",
+            "module-2.op-2"
+          ]
+        },
+        {
+          "op": "set",
+          "path": "connections/connection-4/operations",
+          "value": [
+            "contract-1.op-1",
+            "contract-1.op-2",
+            "contract-1.op-3"
+          ]
+        },
+        {
+          "op": "set",
+          "path": "connections/connection-3/operations",
+          "value": [
+            "module-3.op-1"
+          ]
+        },
+        {
+          "op": "set",
+          "path": "connections/connection-5/operations",
+          "value": [
+            "module-4.op-1"
+          ]
+        },
+        {
+          "op": "set",
+          "path": "connections/connection-6/operations",
+          "value": [
+            "module-5.op-1"
+          ]
+        },
+        {
+          "op": "set",
+          "path": "connections/connection-8/operations",
+          "value": [
+            "inject.type_text"
+          ]
+        },
+        {
+          "op": "set",
+          "path": "tests/happy-path/steps",
+          "value": [
+            {
+              "id": "s1",
+              "via": "connection-1",
+              "operation": "hotkey.start",
+              "does": "User presses Ctrl+Alt+Space and says \"Send the report to Anna\"",
+              "expect": [
+                {
+                  "field": "hotkey.listening",
+                  "from": "idle",
+                  "to": "recording"
+                }
+              ]
+            },
+            {
+              "id": "s2",
+              "via": "connection-7",
+              "operation": "module-1.op-1",
+              "does": "Event Handler calls start_transcribing; the STT thread receives a new 10 s ring buffer",
+              "returns": "Ok(())",
+              "expect": [
+                {
+                  "field": "module-1.is_transcribing",
+                  "from": "false",
+                  "to": "true"
+                }
+              ]
+            },
+            {
+              "id": "s3",
+              "via": "connection-2",
+              "operation": "module-2.op-1",
+              "does": "The audio-consumer thread opens the mic; the callback only scales 48 kHz mono samples into AudioDevice's ring buffer",
+              "returns": "HeapCons<f32>"
+            },
+            {
+              "id": "s4",
+              "via": "connection-9",
+              "operation": "audio-processor.process",
+              "does": "Each 480-sample block becomes 160 samples at 16 kHz, written to the STT ring buffer; on_level reports about 0.7 while the user speaks",
+              "returns": "&[f32] of 160 samples"
+            },
+            {
+              "id": "s5",
+              "via": "connection-4",
+              "operation": "contract-1.op-1",
+              "does": "Every 10 ms the STT thread drains the ring buffer into push_audio; VAD holds the speech as one open segment"
+            },
+            {
+              "id": "s6",
+              "via": "connection-1",
+              "operation": "hotkey.stop",
+              "does": "User presses Ctrl+Alt+Space again",
+              "expect": [
+                {
+                  "field": "hotkey.listening",
+                  "from": "recording",
+                  "to": "idle"
+                }
+              ]
+            },
+            {
+              "id": "s7",
+              "via": "connection-7",
+              "operation": "module-1.op-2",
+              "does": "Event Handler calls stop_transcribing; is_transcribing clears and Transcriber joins the audio-consumer thread",
+              "expect": [
+                {
+                  "field": "module-1.is_transcribing",
+                  "from": "true",
+                  "to": "false"
+                }
+              ]
+            },
+            {
+              "id": "s8",
+              "via": "connection-9",
+              "operation": "audio-processor.finish",
+              "does": "Before exiting, the audio-consumer thread writes the resampler's tail into the STT ring buffer"
+            },
+            {
+              "id": "s9",
+              "via": "connection-4",
+              "operation": "contract-1.op-3",
+              "does": "Transcriber sends Flush; the STT thread drains what is left in the ring buffer, then flushes"
+            },
+            {
+              "id": "s10",
+              "via": "connection-3",
+              "does": "VAD closes the open segment and Parakeet transcribes it",
+              "returns": "\"Send the report to Anna.\""
+            },
+            {
+              "id": "s11",
+              "via": "connection-5",
+              "operation": "module-4.op-1",
+              "does": "The STT subscriber appends \"Send the report to Anna.\" to the raw transcript"
+            },
+            {
+              "id": "s12",
+              "via": "connection-6",
+              "operation": "module-5.op-1",
+              "does": "clean_transcript keeps every word and fixes punctuation",
+              "returns": "\"Send the report to Anna.\""
+            },
+            {
+              "id": "s13",
+              "via": "connection-8",
+              "operation": "inject.type_text",
+              "does": "Event Handler types \"Send the report to Anna.\" into the focused text field",
+              "returns": "Ok(())"
+            }
+          ]
+        },
+        {
+          "op": "set",
+          "path": "tests/happy-path/covers",
+          "value": [
+            "module-1.op-1",
+            "module-1.op-2",
+            "module-2.op-1",
+            "audio-processor.process",
+            "audio-processor.finish",
+            "contract-1.op-1",
+            "contract-1.op-3",
+            "module-5.op-1",
+            "inject.type_text"
+          ]
+        }
+      ],
+      "acceptedAt": 225
+    },
+    {
+      "id": "p8",
+      "by": "student",
+      "status": "accepted",
+      "changes": [
+        {
+          "op": "add",
+          "path": "parts/hotkey/transitions/start-recording",
+          "value": {
+            "id": "start-recording",
+            "field": "listening",
+            "trigger": "hotkey.start",
+            "from": [
+              "idle"
+            ],
+            "to": "recording",
+            "confirmed": false
+          }
+        },
+        {
+          "op": "add",
+          "path": "parts/hotkey/transitions/stop-recording",
+          "value": {
+            "id": "stop-recording",
+            "field": "listening",
+            "trigger": "hotkey.stop",
+            "from": [
+              "recording"
+            ],
+            "to": "idle",
+            "confirmed": false
+          }
+        }
+      ],
+      "acceptedAt": 226
+    }
+  ],
+  "layout": {
+    "parts": {
+      "module-1": {
+        "x": 330,
+        "y": 246
+      },
+      "module-2": {
+        "x": 712,
+        "y": 206
+      },
+      "hotkey": {
+        "x": 273,
+        "y": -162
+      },
+      "config": {
+        "x": 573,
+        "y": -170
+      },
+      "module-3": {
+        "x": 1004,
+        "y": 400
+      },
+      "contract-1": {
+        "x": 714,
+        "y": 423
+      },
+      "module-4": {
+        "x": 714,
+        "y": 602
+      },
+      "module-5": {
+        "x": 718,
+        "y": 778
+      },
+      "inject": {
+        "x": 1028,
+        "y": -162
+      },
+      "module-6": {
+        "x": 564,
+        "y": -17
+      },
+      "audio-processor": {
+        "x": 402,
+        "y": 695
+      }
+    },
+    "boundaries": {
+      "boundary-1": {
+        "x": 241,
+        "y": 193,
+        "w": 1134,
+        "h": 786
+      },
+      "tauri-app": {
+        "x": 256,
+        "y": -179,
+        "w": 1564,
+        "h": 262
+      }
+    }
+  }
+}

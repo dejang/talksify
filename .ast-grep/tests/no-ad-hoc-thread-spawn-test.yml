@@ -1,0 +1,19 @@
+id: no-ad-hoc-thread-spawn
+valid:
+  - |
+    fn probe(queue: &mut JobQueue, job: Job) {
+        queue.submit(job);
+    }
+invalid:
+  - |
+    fn probe() {
+        let _ = std::thread::spawn(move || work());
+    }
+  - |
+    fn probe() {
+        let _ = std::thread::Builder::new();
+    }
+  - |
+    fn probe() {
+        let _ = std::sync::mpsc::channel();
+    }

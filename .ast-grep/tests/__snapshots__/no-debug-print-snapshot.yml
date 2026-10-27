@@ -1,0 +1,20 @@
+id: no-debug-print
+snapshots:
+  "fn probe(count: usize) {\n    println!(\"count {count}\");\n}\n":
+    labels:
+    - source: println!("count {count}")
+      style: primary
+      start: 29
+      end: 54
+  "fn probe(error: &str) {\n    eprintln!(\"failed: {error}\");\n}\n":
+    labels:
+    - source: "eprintln!(\"failed: {error}\")"
+      style: primary
+      start: 28
+      end: 56
+  "fn probe(value: u32) {\n    let _ = dbg!(value);\n}\n":
+    labels:
+    - source: dbg!(value)
+      style: primary
+      start: 35
+      end: 46

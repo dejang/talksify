@@ -1,0 +1,28 @@
+id: float-equality-literal
+valid:
+  - |
+    fn probe(gain: f32, count: usize) -> bool {
+        gain > 0.5 || count == 0 || gain.abs() > 1e-6
+    }
+invalid:
+  - |
+    fn probe(gain: f32) -> bool {
+        gain == 0.0
+    }
+  - |
+    fn probe(value: f64) -> bool {
+        value != 1.0
+    }
+  - |
+    fn probe(weight: f64) -> bool {
+        weight.abs() <= 0.0
+    }
+  - |
+    fn probe(spread: f64) -> bool {
+        !(spread > 0.0)
+    }
+  - |
+    fn probe(mean: f64) {
+        let expected_mean = -0.25;
+        assert_eq!(mean, expected_mean);
+    }

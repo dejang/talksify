@@ -1,0 +1,52 @@
+id: no-doc-attribute
+snapshots:
+  "#![doc = include_str!(\"../README.md\")]\n":
+    labels:
+    - source: doc = include_str!("../README.md")
+      style: primary
+      start: 3
+      end: 37
+  "#[cfg_attr(all(), /* c */ doc /* c */ = \"Hidden from the comment rules.\")]\nfn probe() {}\n":
+    labels:
+    - source: cfg_attr(all(), /* c */ doc /* c */ = "Hidden from the comment rules.")
+      style: primary
+      start: 2
+      end: 73
+  "#[cfg_attr(docsrs, doc = \"Hidden from the comment rules.\")]\nfn probe() {}\n":
+    labels:
+    - source: cfg_attr(docsrs, doc = "Hidden from the comment rules.")
+      style: primary
+      start: 2
+      end: 58
+  "#[doc /* x */ = \"Hidden from the comment rules.\"]\nfn probe() {}\n":
+    labels:
+    - source: doc /* x */ = "Hidden from the comment rules."
+      style: primary
+      start: 2
+      end: 48
+  "#[doc = \"Hidden from the comment rules.\"]\nfn probe() {}\n":
+    labels:
+    - source: doc = "Hidden from the comment rules."
+      style: primary
+      start: 2
+      end: 40
+  "macro_rules! probe {\n    () => {\n        #[/* c */ doc = \"Hidden from the comment rules.\"]\n        fn probe() {}\n    };\n}\n":
+    labels:
+    - source: "[/* c */ doc = \"Hidden from the comment rules.\"]"
+      style: primary
+      start: 42
+      end: 90
+    - source: '#'
+      style: secondary
+      start: 41
+      end: 42
+  "macro_rules! probe {\n    () => {\n        #[doc = \"Hidden from the comment rules.\"]\n        fn probe() {}\n    };\n}\n":
+    labels:
+    - source: "[doc = \"Hidden from the comment rules.\"]"
+      style: primary
+      start: 42
+      end: 82
+    - source: '#'
+      style: secondary
+      start: 41
+      end: 42

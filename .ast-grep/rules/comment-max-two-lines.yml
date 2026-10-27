@@ -1,0 +1,254 @@
+id: comment-max-two-lines-ts
+language: TypeScript
+severity: error
+message: "Avoid narrative comments about implementation details, assumed callers, or reasons for the chosen implementation. Limit an implementation comment to at most two lines. Document API parameters, return values, and error cases as concise statements of the API's own guarantees."
+# A run is adjacent comments. Blank lines, decorators, `,` and `;` do not end it, and it
+# carries into and out of nested nodes, like a trailing comment after `}`. Walks step one
+# neighbor at a time, as `stopBy` walks can visit hidden grammar nodes.
+utils:
+  comment:
+    kind: comment
+  see-through:
+    any:
+      - kind: decorator
+      - kind: empty_statement
+      - regex: '^[,;]$'
+  first:
+    any:
+      - not: {follows: {regex: '[\s\S]'}}
+      - follows: {all: [{matches: see-through}, {matches: first}]}
+  last:
+    any:
+      - not: {precedes: {regex: '[\s\S]'}}
+      - precedes: {all: [{matches: see-through}, {matches: last}]}
+  lines-2: {regex: '\n[\s\S]'}
+  lines-3: {regex: '\n[\s\S]*\n[\s\S]'}
+  opens-1: {has: {all: [{matches: first}, {any: [{matches: comment}, {matches: opens-1}]}]}}
+  opens-2: {has: {all: [{matches: first}, {any: [{matches: run-2}, {matches: opens-2}]}]}}
+  step-1:
+    precedes:
+      any:
+        - matches: comment
+        - matches: opens-1
+        - all: [{matches: see-through}, {matches: step-1}]
+  step-2:
+    precedes:
+      any:
+        - matches: run-2
+        - matches: opens-2
+        - all: [{matches: see-through}, {matches: step-2}]
+  next-1:
+    any: [{matches: step-1}, {all: [{matches: last}, {inside: {matches: next-1}}]}]
+  next-2:
+    any: [{matches: step-2}, {all: [{matches: last}, {inside: {matches: next-2}}]}]
+  run-2:
+    matches: comment
+    any: [{matches: lines-2}, {matches: next-1}]
+  run-3:
+    matches: comment
+    any:
+      - matches: lines-3
+      - all: [{matches: lines-2}, {matches: next-1}]
+      - matches: next-2
+  closes-over:
+    has: {all: [{matches: last}, {any: [{matches: over}, {matches: closes-over}]}]}
+  back-over:
+    any:
+      - follows:
+          any:
+            - matches: over
+            - matches: closes-over
+            - all: [{matches: see-through}, {matches: back-over}]
+      - all: [{matches: first}, {inside: {matches: back-over}}]
+  over:
+    matches: comment
+    any: [{matches: run-3}, {matches: back-over}]
+rule:
+  matches: over
+---
+id: comment-max-two-lines-tsx
+language: Tsx
+severity: error
+message: "Avoid narrative comments about implementation details, assumed callers, or reasons for the chosen implementation. Limit an implementation comment to at most two lines. Document API parameters, return values, and error cases as concise statements of the API's own guarantees."
+# A run is adjacent comments. Blank lines, decorators, `,` and `;` do not end it, and it
+# carries into and out of nested nodes, like a trailing comment after `}`. Walks step one
+# neighbor at a time, as `stopBy` walks can visit hidden grammar nodes.
+utils:
+  jsx-comment:
+    kind: jsx_expression
+    regex: '^\{\s*(/\*[^*]*\*+([^/*][^*]*\*+)*/\s*|//[^\n]*\n\s*)+\}$'
+  comment:
+    any:
+      - kind: comment
+        not: {inside: {matches: jsx-comment}}
+      - matches: jsx-comment
+  see-through:
+    any:
+      - kind: decorator
+      - kind: empty_statement
+      - regex: '^[,;]$'
+      - {kind: jsx_text, regex: '^\s*$'}
+  first:
+    any:
+      - not: {follows: {regex: '[\s\S]'}}
+      - follows: {all: [{matches: see-through}, {matches: first}]}
+  last:
+    any:
+      - not: {precedes: {regex: '[\s\S]'}}
+      - precedes: {all: [{matches: see-through}, {matches: last}]}
+  lines-2:
+    any:
+      - {not: {matches: jsx-comment}, regex: '\n[\s\S]'}
+      - {matches: jsx-comment, regex: '^\{\s*\S[\s\S]*\n[\s\S]*\S\s*\}$'}
+  lines-3:
+    any:
+      - {not: {matches: jsx-comment}, regex: '\n[\s\S]*\n[\s\S]'}
+      - {matches: jsx-comment, regex: '^\{\s*\S[\s\S]*\n[\s\S]*\n[\s\S]*\S\s*\}$'}
+  opens-1: {has: {all: [{matches: first}, {any: [{matches: comment}, {matches: opens-1}]}]}}
+  opens-2: {has: {all: [{matches: first}, {any: [{matches: run-2}, {matches: opens-2}]}]}}
+  step-1:
+    precedes:
+      any:
+        - matches: comment
+        - matches: opens-1
+        - all: [{matches: see-through}, {matches: step-1}]
+  step-2:
+    precedes:
+      any:
+        - matches: run-2
+        - matches: opens-2
+        - all: [{matches: see-through}, {matches: step-2}]
+  next-1:
+    any: [{matches: step-1}, {all: [{matches: last}, {inside: {matches: next-1}}]}]
+  next-2:
+    any: [{matches: step-2}, {all: [{matches: last}, {inside: {matches: next-2}}]}]
+  run-2:
+    matches: comment
+    any: [{matches: lines-2}, {matches: next-1}]
+  run-3:
+    matches: comment
+    any:
+      - matches: lines-3
+      - all: [{matches: lines-2}, {matches: next-1}]
+      - matches: next-2
+  closes-over:
+    has: {all: [{matches: last}, {any: [{matches: over}, {matches: closes-over}]}]}
+  back-over:
+    any:
+      - follows:
+          any:
+            - matches: over
+            - matches: closes-over
+            - all: [{matches: see-through}, {matches: back-over}]
+      - all: [{matches: first}, {inside: {matches: back-over}}]
+  over:
+    matches: comment
+    any: [{matches: run-3}, {matches: back-over}]
+rule:
+  matches: over
+---
+id: comment-max-two-lines-js
+language: JavaScript
+severity: error
+message: "Avoid narrative comments about implementation details, assumed callers, or reasons for the chosen implementation. Limit an implementation comment to at most two lines. Document API parameters, return values, and error cases as concise statements of the API's own guarantees."
+# A run is adjacent comments. Blank lines, decorators, `,` and `;` do not end it, and it
+# carries into and out of nested nodes, like a trailing comment after `}`. Walks step one
+# neighbor at a time, as `stopBy` walks can visit hidden grammar nodes.
+utils:
+  jsx-comment:
+    kind: jsx_expression
+    regex: '^\{\s*(/\*[^*]*\*+([^/*][^*]*\*+)*/\s*|//[^\n]*\n\s*)+\}$'
+  comment:
+    any:
+      - kind: comment
+        not: {inside: {matches: jsx-comment}}
+      - kind: html_comment
+      - matches: jsx-comment
+  see-through:
+    any:
+      - kind: decorator
+      - kind: empty_statement
+      - regex: '^[,;]$'
+      - {kind: jsx_text, regex: '^\s*$'}
+  first:
+    any:
+      - not: {follows: {regex: '[\s\S]'}}
+      - follows: {all: [{matches: see-through}, {matches: first}]}
+  last:
+    any:
+      - not: {precedes: {regex: '[\s\S]'}}
+      - precedes: {all: [{matches: see-through}, {matches: last}]}
+  lines-2:
+    any:
+      - {not: {matches: jsx-comment}, regex: '\n[\s\S]'}
+      - {matches: jsx-comment, regex: '^\{\s*\S[\s\S]*\n[\s\S]*\S\s*\}$'}
+  lines-3:
+    any:
+      - {not: {matches: jsx-comment}, regex: '\n[\s\S]*\n[\s\S]'}
+      - {matches: jsx-comment, regex: '^\{\s*\S[\s\S]*\n[\s\S]*\n[\s\S]*\S\s*\}$'}
+  opens-1: {has: {all: [{matches: first}, {any: [{matches: comment}, {matches: opens-1}]}]}}
+  opens-2: {has: {all: [{matches: first}, {any: [{matches: run-2}, {matches: opens-2}]}]}}
+  step-1:
+    precedes:
+      any:
+        - matches: comment
+        - matches: opens-1
+        - all: [{matches: see-through}, {matches: step-1}]
+  step-2:
+    precedes:
+      any:
+        - matches: run-2
+        - matches: opens-2
+        - all: [{matches: see-through}, {matches: step-2}]
+  next-1:
+    any: [{matches: step-1}, {all: [{matches: last}, {inside: {matches: next-1}}]}]
+  next-2:
+    any: [{matches: step-2}, {all: [{matches: last}, {inside: {matches: next-2}}]}]
+  run-2:
+    matches: comment
+    any: [{matches: lines-2}, {matches: next-1}]
+  run-3:
+    matches: comment
+    any:
+      - matches: lines-3
+      - all: [{matches: lines-2}, {matches: next-1}]
+      - matches: next-2
+  closes-over:
+    has: {all: [{matches: last}, {any: [{matches: over}, {matches: closes-over}]}]}
+  back-over:
+    any:
+      - follows:
+          any:
+            - matches: over
+            - matches: closes-over
+            - all: [{matches: see-through}, {matches: back-over}]
+      - all: [{matches: first}, {inside: {matches: back-over}}]
+  over:
+    matches: comment
+    any: [{matches: run-3}, {matches: back-over}]
+rule:
+  matches: over
+---
+id: comment-max-width-ts
+language: TypeScript
+severity: error
+message: "Keep each comment line within 100 characters, counted from its first non-space character. Cut words instead of widening the line."
+rule:
+  kind: comment
+  regex: '(^|\n)[ \t]*[^ \t\r\n][^\r\n]{100,}'
+---
+id: comment-max-width-tsx
+language: Tsx
+severity: error
+message: "Keep each comment line within 100 characters, counted from its first non-space character. Cut words instead of widening the line."
+rule:
+  kind: comment
+  regex: '(^|\n)[ \t]*[^ \t\r\n][^\r\n]{100,}'
+---
+id: comment-max-width-js
+language: JavaScript
+severity: error
+message: "Keep each comment line within 100 characters, counted from its first non-space character. Cut words instead of widening the line."
+rule:
+  any: [{kind: comment}, {kind: html_comment}]
+  regex: '(^|\n)[ \t]*[^ \t\r\n][^\r\n]{100,}'

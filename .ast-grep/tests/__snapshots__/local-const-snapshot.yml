@@ -1,0 +1,16 @@
+id: local-const
+snapshots:
+  "fn probe() -> f32 {\n    const STEP: f32 = 0.25;\n    STEP\n}\n":
+    labels:
+    - source: "const STEP: f32 = 0.25;"
+      style: primary
+      start: 24
+      end: 47
+    - source: |-
+        fn probe() -> f32 {
+            const STEP: f32 = 0.25;
+            STEP
+        }
+      style: secondary
+      start: 0
+      end: 58

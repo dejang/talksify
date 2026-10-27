@@ -1,0 +1,32 @@
+{
+  "name": "talksify",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "lint": "oxlint && ast-grep scan --globs '!src-tauri/target' --globs '!dist'",
+    "lint:oxlint": "oxlint",
+    "lint:ast-grep": "ast-grep scan --globs '!src-tauri/target' --globs '!dist'",
+    "lint:ast-grep:test": "ast-grep test"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-global-shortcut": "^2",
+    "react": "^19",
+    "react-dom": "^19"
+  },
+  "devDependencies": {
+    "@ast-grep/cli": "^0.51.0",
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^4",
+    "oxlint": "^0.15",
+    "typescript": "^5",
+    "vite": "^6"
+  }
+}

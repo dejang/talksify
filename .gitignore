@@ -1,0 +1,10 @@
+dist
+node_modules
+src-tauri/target
+src-tauri/gen
+.DS_Store
+
+# ML model files (download via scripts/download-models.sh)
+src-tauri/models/stt/*.onnx
+src-tauri/models/qwen-0.6b/*.gguf
+src-tauri/models/vad/*.onnx

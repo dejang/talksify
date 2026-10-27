@@ -1,0 +1,46 @@
+id: cfg-test-on-non-mod
+valid:
+  - |
+    pub fn probe() -> u32 {
+        1
+    }
+
+    #[cfg(test)]
+    mod probe_unit {
+        struct Fixture(u32);
+
+        impl Fixture {
+            fn value(&self) -> u32 {
+                self.0
+            }
+        }
+
+        #[test]
+        fn t() {}
+    }
+invalid:
+  - |
+    pub struct Probe {
+        #[cfg(test)]
+        observed: u32,
+    }
+  - |
+    #[cfg(test)]
+    impl Probe {
+        fn probe(&self) {}
+    }
+  - |
+    pub struct Probe {
+        observed: u32,
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        impl Probe {
+            fn probe(&self) -> u32 {
+                self.observed
+            }
+        }
+    }

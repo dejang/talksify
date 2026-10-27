@@ -1,0 +1,41 @@
+id: const-fn-config
+language: rust
+severity: error
+message: "Zero-argument constant/literal function disguises a constant; pass behavioural values via constructor configuration (apply-style: Configuration and constants)."
+rule:
+  kind: function_item
+  all:
+    - has:
+        field: parameters
+        regex: '^\(\s*\)$'
+    - not:
+        inside:
+          kind: impl_item
+          has:
+            field: trait
+            kind: type_identifier
+          stopBy: end
+    - any:
+        - has:
+            kind: function_modifiers
+            regex: '\bconst\b'
+        - has:
+            field: body
+            all:
+              - not:
+                  has:
+                    any:
+                      - kind: let_declaration
+                      - kind: expression_statement
+                      - kind: call_expression
+                      - kind: macro_invocation
+                      - kind: struct_expression
+                    stopBy: end
+              - has:
+                  any:
+                    - kind: integer_literal
+                    - kind: float_literal
+                    - kind: string_literal
+                    - kind: boolean_literal
+                    - kind: array_expression
+                  stopBy: end

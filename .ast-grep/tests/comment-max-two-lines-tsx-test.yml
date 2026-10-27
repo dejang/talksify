@@ -1,0 +1,67 @@
+id: comment-max-two-lines-tsx
+valid:
+  - |
+    const probe = (
+      <div>
+        {/* one */}
+        {/* two */}
+      </div>
+    );
+  - |
+    const probe = (
+      <div>
+        {/* one */}
+        {/* two */}
+        text
+        {/* three */}
+      </div>
+    );
+  - |
+    const probe = (
+      <div>
+        {/* one */ value /* two */}
+        {/* three */}
+        {/* four */}
+      </div>
+    );
+  - |
+    const probe = (
+      <div>
+        {
+          // one
+        }
+        {/* two */}
+      </div>
+    );
+invalid:
+  - |
+    const probe = (
+      <div>
+        {/* one */}
+        {/* two */}
+        {/* three */}
+      </div>
+    );
+  - |
+    const probe = (
+      <div>
+        {/* one */}
+
+        {/* two
+            three */}
+      </div>
+    );
+  - |
+    const probe = (
+      <div>
+        {/* one
+            two
+            three */}
+      </div>
+    );
+  - |
+    // one
+
+    // two
+    // three
+    const probe = <div />;
