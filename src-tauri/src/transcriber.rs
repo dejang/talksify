@@ -476,7 +476,7 @@ mod tests {
     }
 
     // Each case: text spoken by `say` ([[slnc N]] = N ms of silence), phrases the output must and
-    // must not contain, case-insensitive. Without a take-back, at most 10% of words may be dropped.
+    // must not contain, case-insensitive. At most 10% of words may be dropped.
     #[test]
     #[ignore = "loads the bundled STT, VAD and LLM models and uses macOS `say`"]
     fn speech_to_clean_text() {
@@ -492,12 +492,6 @@ mod tests {
         assert!(llm.is_ready(), "LLM failed to load");
 
         let cases: &[(&str, &[&str], &[&str])] = &[
-            (
-                "Let's have dinner tomorrow. Oh no, no, no, wait, I have something else. \
-                 Let's have Thursday dinner.",
-                &["thursday"],
-                &["tomorrow", "wait"],
-            ),
             (
                 "So the plan is. One, we refactor the parser. Two, we add more tests. \
                  Three, we ship it on Friday.",
@@ -527,7 +521,6 @@ mod tests {
                 &[],
             ),
             ("The problem is this. The build takes way too long on CI.", &["this: the build"], &[]),
-            ("Call me at five. Actually, make it six.", &["six"], &["five"]),
         ];
 
         let mut failures = Vec::new();

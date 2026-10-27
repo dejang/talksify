@@ -4,7 +4,6 @@ use std::fmt::Write;
 /// Rule-based cleanup around the LLM: filler removal before it, list layout after it.
 pub(crate) struct TextFormatter {
     fillers: HashSet<&'static str>,
-    correction_cues: Vec<&'static str>,
     ordinals: HashMap<&'static str, usize>,
     min_counted_items: usize,
     min_bullet_items: usize,
@@ -14,30 +13,23 @@ pub(crate) struct TextFormatter {
 impl TextFormatter {
     pub(crate) fn new() -> Self {
         let counted = [
-            ["one", "first"],
-            ["two", "second"],
-            ["three", "third"],
-            ["four", "fourth"],
-            ["five", "fifth"],
-            ["six", "sixth"],
-            ["seven", "seventh"],
-            ["eight", "eighth"],
-            ["nine", "ninth"],
-            ["ten", "tenth"],
+            ["1", "one", "first"],
+            ["2", "two", "second"],
+            ["3", "three", "third"],
+            ["4", "four", "fourth"],
+            ["5", "five", "fifth"],
+            ["6", "six", "sixth"],
+            ["7", "seven", "seventh"],
+            ["8", "eight", "eighth"],
+            ["9", "nine", "ninth"],
+            ["10", "ten", "tenth"],
         ];
         Self {
-            fillers: ["um", "umm", "uh", "uhh", "uhm", "erm", "er", "hmm"]
-                .into_iter()
-                .collect(),
-            correction_cues: vec![
-                " wait ",
-                " actually ",
-                " scratch that ",
-                " i mean ",
-                " sorry ",
-                " no no ",
-                " oh no ",
-            ],
+            fillers: [
+                "uh", "uhh", "uhm", "um", "umm", "erm", "er", "hmm", "hm", "mm", "mhm",
+            ]
+            .into_iter()
+            .collect(),
             ordinals: counted
                 .iter()
                 .enumerate()
@@ -49,16 +41,21 @@ impl TextFormatter {
         }
     }
 
-    /// Removes hesitation sounds set off by punctuation ("Um, …", "…, uh, …") and the commas
-    /// that only surrounded them.
+    /// Removes hesitation sounds ("uh", "um", ...) and punctuation that only surrounded them.
     pub(crate) fn strip_fillers(&self, text: &str) -> String {
+        let has_german_uhr = text
+            .split(|c: char| !c.is_alphabetic())
+            .any(|w| w.eq_ignore_ascii_case("uhr"));
         let mut words: Vec<String> = Vec::new();
         let mut capitalize_next = false;
         for token in text.split_whitespace() {
             let core = token.trim_end_matches([',', '.', ';', ':', '!', '?']);
-            // A bare "um" or "er" is a real word in other languages (German "um 10 Uhr").
+            let lower = core.to_lowercase();
             let set_off = core.len() < token.len();
-            if !set_off || !self.fillers.contains(core.to_lowercase().as_str()) {
+            // Bare "er" and German "um <time> Uhr" are real words; other fillers strip anywhere.
+            let keep_word = (lower == "er" && !set_off)
+                || (lower == "um" && !set_off && core == "um" && has_german_uhr);
+            if keep_word || !self.fillers.contains(lower.as_str()) {
                 let mut word = String::with_capacity(token.len());
                 if capitalize_next {
                     push_capitalized(&mut word, token);
@@ -90,18 +87,6 @@ impl TextFormatter {
         words.join(" ")
     }
 
-    /// Whether the speaker takes something back ("wait", "actually", "scratch that", ...).
-    pub(crate) fn has_correction(&self, text: &str) -> bool {
-        let mut words = String::from(" ");
-        for word in text.split(|c: char| !c.is_alphanumeric() && c != '\'') {
-            if !word.is_empty() {
-                words.push_str(&word.to_lowercase());
-                words.push(' ');
-            }
-        }
-        self.correction_cues.iter().any(|cue| words.contains(cue))
-    }
-
     /// Lays out spoken counting as a numbered list and short colon lists as bullets.
     pub(crate) fn format_lists(&self, text: &str) -> String {
         self.bulletize(&self.number_counted(text))
@@ -116,7 +101,7 @@ impl TextFormatter {
         // Each marker spans "[and] two," as (start byte, end byte).
         let mut markers: Vec<(usize, usize)> = Vec::new();
         for (i, &(start, token)) in tokens.iter().enumerate() {
-            let Some(word) = token.strip_suffix(',') else {
+            let Some(word) = token.strip_suffix([',', '.', ':']) else {
                 continue;
             };
             let Some(&index) = self.ordinals.get(word.to_lowercase().as_str()) else {
@@ -130,7 +115,7 @@ impl TextFormatter {
                 _ => (start, prev.map(|(_, t)| t)),
             };
             let clause_start = before.is_none_or(|t| t.ends_with([',', '.', ';', ':', '!', '?']));
-            if index > 0 && !clause_start {
+            if (index == 0 && token.ends_with('.')) || (index > 0 && !clause_start) {
                 continue;
             }
             if index == markers.len() {
@@ -292,6 +277,18 @@ mod tests {
             f.strip_fillers("Um, I think we should, uh, push the release to Monday."),
             "I think we should push the release to Monday."
         );
+        assert_eq!(
+            f.strip_fillers("Uh so the instructions must be clear."),
+            "So the instructions must be clear."
+        );
+        assert_eq!(
+            f.strip_fillers("Interesting. Uh maybe we can fix it."),
+            "Interesting. Maybe we can fix it."
+        );
+        assert_eq!(
+            f.strip_fillers("For instance, um it needs to remove uh uh things that uh it outputs."),
+            "For instance, it needs to remove things that it outputs."
+        );
         assert_eq!(f.strip_fillers("So, um, I guess we could go."), "So I guess we could go.");
         assert_eq!(f.strip_fillers("We'll see, um. Then we go."), "We'll see. Then we go.");
         assert_eq!(f.strip_fillers("Umbrella and uh-huh stay."), "Umbrella and uh-huh stay.");
@@ -307,16 +304,6 @@ mod tests {
         ] {
             assert_eq!(f.strip_fillers(text), text);
         }
-    }
-
-    #[test]
-    fn detects_take_backs() {
-        let f = TextFormatter::new();
-        assert!(f.has_correction("Let's have dinner tomorrow. Oh no, no, no, wait, Thursday."));
-        assert!(f.has_correction("Call me at five. Actually, make it six."));
-        assert!(f.has_correction("Use the blue one, I mean the red one."));
-        assert!(!f.has_correction("I'm waiting for the build to await the results."));
-        assert!(!f.has_correction("Maybe we can now also fix the following."));
     }
 
     #[test]
@@ -337,6 +324,12 @@ mod tests {
         assert_eq!(
             f.format_lists("First, open the settings. Second, turn on sync. And third, restart the app."),
             "1. Open the settings.\n2. Turn on sync.\n3. Restart the app."
+        );
+        assert_eq!(
+            f.format_lists(
+                "So the plan is: 1, we refactor the parser. 2, we add more tests. 3. We ship it on Friday."
+            ),
+            "So the plan is:\n1. We refactor the parser.\n2. We add more tests.\n3. We ship it on Friday."
         );
     }
 
