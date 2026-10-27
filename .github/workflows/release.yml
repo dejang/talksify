@@ -10,6 +10,11 @@ on:
         description: "Release tag to build and publish (e.g. v0.1.0)"
         required: false
         type: string
+      dry_run:
+        description: "Only verify signing certificate and Apple notarization credentials (fast ~15s check)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -57,39 +62,6 @@ jobs:
           echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: "pnpm"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
-
-      - name: Cache bundled ML models
-        uses: actions/cache@v4
-        with:
-          path: src-tauri/models
-          key: talksify-models-${{ hashFiles('scripts/download-models.sh') }}
-
-      - name: Ensure bundled ML models are present
-        run: ./scripts/download-models.sh
-
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-
       - name: Prepare Apple App Store Connect API key (if provided)
         id: notary-key
         env:
@@ -102,7 +74,92 @@ jobs:
             echo "apple_api_key_path=${KEY_PATH}" >> "${GITHUB_OUTPUT}"
           fi
 
+      - name: Preflight verify Apple signing certificate and notarization credentials
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PATH: ${{ steps.notary-key.outputs.apple_api_key_path }}
+        run: |
+          if [ -z "${APPLE_CERTIFICATE}" ] || [ -z "${APPLE_SIGNING_IDENTITY}" ]; then
+            echo "::error::Missing APPLE_CERTIFICATE or APPLE_SIGNING_IDENTITY secret."
+            exit 1
+          fi
+
+          CERT_PATH="${RUNNER_TEMP}/preflight.p12"
+          echo "${APPLE_CERTIFICATE}" | base64 --decode > "${CERT_PATH}"
+          openssl pkcs12 -in "${CERT_PATH}" -noout -passin "pass:${APPLE_CERTIFICATE_PASSWORD}"
+          rm -f "${CERT_PATH}"
+          echo "✓ Certificate (.p12) and password verified."
+
+          if [ -n "${APPLE_API_KEY}" ] && [ -n "${APPLE_API_ISSUER}" ] && [ -n "${APPLE_API_KEY_PATH}" ]; then
+            xcrun notarytool history \
+              --key "${APPLE_API_KEY_PATH}" \
+              --key-id "${APPLE_API_KEY}" \
+              --issuer "${APPLE_API_ISSUER}"
+            echo "✓ App Store Connect API notarization credentials verified."
+          elif [ -n "${APPLE_ID}" ] && [ -n "${APPLE_PASSWORD}" ] && [ -n "${APPLE_TEAM_ID}" ]; then
+            CLEAN_ID=$(printf '%s' "${APPLE_ID}" | tr -d '[:space:]')
+            CLEAN_PW=$(printf '%s' "${APPLE_PASSWORD}" | tr -d '[:space:]')
+            CLEAN_TEAM=$(printf '%s' "${APPLE_TEAM_ID}" | tr -d '[:space:]')
+            xcrun notarytool history \
+              --apple-id "${CLEAN_ID}" \
+              --password "${CLEAN_PW}" \
+              --team-id "${CLEAN_TEAM}"
+            echo "✓ Apple ID notarization credentials verified."
+          else
+            echo "::error::Missing notarization secrets (APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID)."
+            exit 1
+          fi
+
+      - name: Setup pnpm
+        if: ${{ !inputs.dry_run }}
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        if: ${{ !inputs.dry_run }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+
+      - name: Install Rust toolchain
+        if: ${{ !inputs.dry_run }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Rust build artifacts
+        if: ${{ !inputs.dry_run }}
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          save-if: "true"
+
+      - name: Cache bundled ML models
+        if: ${{ !inputs.dry_run }}
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/models
+          key: talksify-models-${{ hashFiles('scripts/download-models.sh') }}
+
+      - name: Ensure bundled ML models are present
+        if: ${{ !inputs.dry_run }}
+        run: ./scripts/download-models.sh
+
+      - name: Install frontend dependencies
+        if: ${{ !inputs.dry_run }}
+        run: pnpm install --frozen-lockfile
+
       - name: Build signed and notarized DMG
+        if: ${{ !inputs.dry_run }}
         env:
           CI: "true"
           VERSION: ${{ steps.meta.outputs.version }}
@@ -121,6 +178,10 @@ jobs:
             echo "::warning::APPLE_SIGNING_IDENTITY secret not set; building with ad-hoc signature."
           fi
 
+          export APPLE_ID=$(printf '%s' "${APPLE_ID}" | tr -d '[:space:]')
+          export APPLE_PASSWORD=$(printf '%s' "${APPLE_PASSWORD}" | tr -d '[:space:]')
+          export APPLE_TEAM_ID=$(printf '%s' "${APPLE_TEAM_ID}" | tr -d '[:space:]')
+
           OVERRIDE_CONFIG=$(jq -cn \
             --arg version "${VERSION}" \
             --arg sign_id "${SIGN_ID}" \
@@ -132,6 +193,7 @@ jobs:
             --config "${OVERRIDE_CONFIG}"
 
       - name: Collect and verify DMG artifacts
+        if: ${{ !inputs.dry_run }}
         env:
           VERSION: ${{ steps.meta.outputs.version }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -156,6 +218,7 @@ jobs:
           )
 
       - name: Publish GitHub Release
+        if: ${{ !inputs.dry_run }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
@@ -169,6 +232,7 @@ jobs:
   deploy-pages:
     name: Deploy GitHub Pages
     needs: build-macos
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
