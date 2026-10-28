@@ -3,6 +3,7 @@ node_modules
 src-tauri/target
 src-tauri/gen
 .DS_Store
+.env
 
 # ML model files (download via scripts/download-models.sh)
 src-tauri/models/stt/*.onnx

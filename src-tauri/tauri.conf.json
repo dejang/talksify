@@ -48,7 +48,6 @@
     "macOS": {
       "infoPlist": "Info.plist",
       "entitlements": "entitlements.plist",
-      "signingIdentity": "Apple Development: Dejan Gitin (7ZSRR5J247)",
       "exceptionDomain": ""
     },
     "publisher": "Talksify",
