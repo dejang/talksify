@@ -181,16 +181,29 @@ jobs:
           export APPLE_ID=$(printf '%s' "${APPLE_ID}" | tr -d '[:space:]')
           export APPLE_PASSWORD=$(printf '%s' "${APPLE_PASSWORD}" | tr -d '[:space:]')
           export APPLE_TEAM_ID=$(printf '%s' "${APPLE_TEAM_ID}" | tr -d '[:space:]')
+          export MACOSX_DEPLOYMENT_TARGET="14.0"
+
+          if ! strings src-tauri/target/aarch64-apple-darwin/release/talksify 2>/dev/null | grep -q "air-alias-scopes(fused_glu_float)"; then
+            rm -rf src-tauri/target/aarch64-apple-darwin/release/build/mistralrs-quant* \
+                   src-tauri/target/aarch64-apple-darwin/release/build/mistralrs-paged-attn* \
+                   src-tauri/target/release/build/mistralrs-quant* \
+                   src-tauri/target/release/build/mistralrs-paged-attn*
+            cargo clean --manifest-path src-tauri/Cargo.toml --target aarch64-apple-darwin --release \
+              -p mistralrs-quant -p mistralrs-paged-attn -p mistralrs-core -p mistralrs -p talksify || true
+          fi
 
           OVERRIDE_CONFIG=$(jq -cn \
             --arg version "${VERSION}" \
             --arg sign_id "${SIGN_ID}" \
-            '{version: $version, bundle: {macOS: {signingIdentity: $sign_id}}}')
+            '{version: $version, bundle: {macOS: {minimumSystemVersion: "14.0", signingIdentity: $sign_id}}}')
 
           pnpm tauri build \
             --target aarch64-apple-darwin \
             --bundles dmg \
             --config "${OVERRIDE_CONFIG}"
+
+          strings src-tauri/target/aarch64-apple-darwin/release/talksify | grep -q "air-alias-scopes(fused_glu_float)"
+          echo "✓ Verified precompiled Metal kernels (fused_glu_float) embedded in release binary."
 
       - name: Collect and verify DMG artifacts
         if: ${{ !inputs.dry_run }}

@@ -46,6 +46,7 @@
       "models/vad/*"
     ],
     "macOS": {
+      "minimumSystemVersion": "14.0",
       "infoPlist": "Info.plist",
       "entitlements": "entitlements.plist",
       "exceptionDomain": ""
