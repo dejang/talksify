@@ -8,6 +8,7 @@ mod raw_transcript;
 mod stt;
 mod text_format;
 mod transcriber;
+mod updater;
 
 use std::sync::{Arc, Mutex};
 
@@ -21,6 +22,7 @@ use config::Config;
 use event_handler::AppState;
 use inject::TextInjector;
 use transcriber::Transcriber;
+use updater::Updater;
 
 fn is_recording(state: &AppState) -> bool {
     state.transcriber.lock().is_ok_and(|t| t.is_transcribing())
@@ -62,16 +64,21 @@ fn toggle_autostart(app: &tauri::AppHandle) -> Result<(), tauri_plugin_autostart
     }
 }
 
-fn build_tray(app: &tauri::App, hotkey: String) -> tauri::Result<()> {
+fn build_tray(app: &tauri::App, hotkey: String) -> tauri::Result<Arc<Updater>> {
     let dictation_item = MenuItemBuilder::with_id("dictation", "Disable Dictation").build(app)?;
     let autostart_item = CheckMenuItemBuilder::with_id("autostart", "Start at Login")
         .checked(app.autolaunch().is_enabled().unwrap_or(false))
         .build(app)?;
+    let update_item = MenuItemBuilder::with_id("update", "Check for Updates…").build(app)?;
     let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+    let updater = Updater::new(update_item.clone());
+    let menu_updater = Arc::clone(&updater);
 
     let menu = MenuBuilder::new(app)
         .item(&dictation_item)
         .item(&autostart_item)
+        .separator()
+        .item(&update_item)
         .separator()
         .item(&quit_item)
         .build()?;
@@ -94,11 +101,12 @@ fn build_tray(app: &tauri::App, hotkey: String) -> tauri::Result<()> {
                 }
                 let _ = autostart_item.set_checked(app.autolaunch().is_enabled().unwrap_or(false));
             }
+            "update" => menu_updater.handle_menu_click(app.clone()),
             "quit" => app.exit(0),
             _ => {}
         })
         .build(app)?;
-    Ok(())
+    Ok(updater)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -119,6 +127,8 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_autostart::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -155,7 +165,8 @@ pub fn run() {
                 .map_err(|e| format!("hotkey register: {e}"))?;
             log::info!("hotkey registered ok");
 
-            build_tray(app, config.hotkey).map_err(|e| format!("tray: {e}"))?;
+            let updater = build_tray(app, config.hotkey).map_err(|e| format!("tray: {e}"))?;
+            updater.spawn_startup_check(app.handle().clone());
 
             Ok(())
         })

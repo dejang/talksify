@@ -74,7 +74,7 @@ jobs:
             echo "apple_api_key_path=${KEY_PATH}" >> "${GITHUB_OUTPUT}"
           fi
 
-      - name: Preflight verify Apple signing certificate and notarization credentials
+      - name: Preflight verify Apple signing, notarization, and updater credentials
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -85,11 +85,23 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_PATH: ${{ steps.notary-key.outputs.apple_api_key_path }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           if [ -z "${APPLE_CERTIFICATE}" ] || [ -z "${APPLE_SIGNING_IDENTITY}" ]; then
             echo "::error::Missing APPLE_CERTIFICATE or APPLE_SIGNING_IDENTITY secret."
             exit 1
           fi
+
+          CLEAN_TAURI_KEY=$(printf '%s' "${TAURI_SIGNING_PRIVATE_KEY}" | tr -d '[:space:]')
+          if [ -z "${CLEAN_TAURI_KEY}" ]; then
+            echo "::error::Missing TAURI_SIGNING_PRIVATE_KEY secret."
+            exit 1
+          fi
+          if ! printf '%s' "${CLEAN_TAURI_KEY}" | base64 --decode 2>/dev/null | grep -q "secret key"; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is not a valid base64-encoded Tauri signing key."
+            exit 1
+          fi
+          echo "✓ Tauri updater signing key verified."
 
           CERT_PATH="${RUNNER_TEMP}/preflight.p12"
           echo "${APPLE_CERTIFICATE}" | base64 --decode > "${CERT_PATH}"
@@ -158,7 +170,7 @@ jobs:
         if: ${{ !inputs.dry_run }}
         run: pnpm install --frozen-lockfile
 
-      - name: Build signed and notarized DMG
+      - name: Build signed and notarized DMG + updater bundle
         if: ${{ !inputs.dry_run }}
         env:
           CI: "true"
@@ -172,6 +184,8 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_PATH: ${{ steps.notary-key.outputs.apple_api_key_path }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           SIGN_ID="${APPLE_SIGNING_IDENTITY:--}"
           if [ "${SIGN_ID}" = "-" ]; then
@@ -181,6 +195,7 @@ jobs:
           export APPLE_ID=$(printf '%s' "${APPLE_ID}" | tr -d '[:space:]')
           export APPLE_PASSWORD=$(printf '%s' "${APPLE_PASSWORD}" | tr -d '[:space:]')
           export APPLE_TEAM_ID=$(printf '%s' "${APPLE_TEAM_ID}" | tr -d '[:space:]')
+          export TAURI_SIGNING_PRIVATE_KEY=$(printf '%s' "${TAURI_SIGNING_PRIVATE_KEY}" | tr -d '[:space:]')
           export MACOSX_DEPLOYMENT_TARGET="14.0"
 
           if ! strings src-tauri/target/aarch64-apple-darwin/release/talksify 2>/dev/null | grep -q "air-alias-scopes(fused_glu_float)"; then
@@ -195,20 +210,22 @@ jobs:
           OVERRIDE_CONFIG=$(jq -cn \
             --arg version "${VERSION}" \
             --arg sign_id "${SIGN_ID}" \
-            '{version: $version, bundle: {macOS: {minimumSystemVersion: "14.0", signingIdentity: $sign_id}}}')
+            '{version: $version, bundle: {createUpdaterArtifacts: true, macOS: {minimumSystemVersion: "14.0", signingIdentity: $sign_id}}}')
 
           pnpm tauri build \
             --target aarch64-apple-darwin \
-            --bundles dmg \
+            --bundles app,dmg \
             --config "${OVERRIDE_CONFIG}"
 
           strings src-tauri/target/aarch64-apple-darwin/release/talksify | grep -q "air-alias-scopes(fused_glu_float)"
           echo "✓ Verified precompiled Metal kernels (fused_glu_float) embedded in release binary."
 
-      - name: Collect and verify DMG artifacts
+      - name: Collect, verify, and generate updater manifest (latest.json)
         if: ${{ !inputs.dry_run }}
         env:
+          TAG: ${{ steps.meta.outputs.tag }}
           VERSION: ${{ steps.meta.outputs.version }}
+          REPO: ${{ github.repository }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           mkdir -p release-assets
@@ -218,15 +235,54 @@ jobs:
             exit 1
           fi
 
+          TAR_PATH=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -name "*.app.tar.gz" -print -quit)
+          SIG_PATH="${TAR_PATH}.sig"
+          if [ -z "${TAR_PATH}" ] || [ ! -f "${TAR_PATH}" ] || [ ! -f "${SIG_PATH}" ]; then
+            echo "::error::Missing updater archive (.app.tar.gz) or signature (.app.tar.gz.sig)."
+            exit 1
+          fi
+
           if [ -n "${APPLE_SIGNING_IDENTITY}" ]; then
             codesign --verify --verbose=2 "${DMG_PATH}"
           fi
 
+          UPDATER_ARCHIVE="Talksify_${VERSION}_aarch64.app.tar.gz"
           cp "${DMG_PATH}" "release-assets/Talksify.dmg"
           cp "${DMG_PATH}" "release-assets/Talksify_${VERSION}_aarch64.dmg"
+          cp "${TAR_PATH}" "release-assets/${UPDATER_ARCHIVE}"
+          cp "${SIG_PATH}" "release-assets/${UPDATER_ARCHIVE}.sig"
+
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          NOTES=""
+          if [ -n "${PREV_TAG}" ]; then
+            NOTES=$(git log --no-merges --pretty=format:"• %s" "${PREV_TAG}..HEAD" | grep -v "^• chore(release):" || true)
+          fi
+
+          SIGNATURE=$(cat "${SIG_PATH}")
+          PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          ARCHIVE_URL="https://github.com/${REPO}/releases/download/${TAG}/${UPDATER_ARCHIVE}"
+
+          jq -n \
+            --arg version "${VERSION}" \
+            --arg notes "${NOTES}" \
+            --arg pub_date "${PUB_DATE}" \
+            --arg url "${ARCHIVE_URL}" \
+            --arg signature "${SIGNATURE}" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "darwin-aarch64": {
+                  signature: $signature,
+                  url: $url
+                }
+              }
+            }' > release-assets/latest.json
+
           (
             cd release-assets
-            shasum -a 256 "Talksify.dmg" "Talksify_${VERSION}_aarch64.dmg" > SHA256SUMS.txt
+            shasum -a 256 "Talksify.dmg" "Talksify_${VERSION}_aarch64.dmg" "${UPDATER_ARCHIVE}" > SHA256SUMS.txt
           )
 
       - name: Publish GitHub Release
@@ -239,6 +295,9 @@ jobs:
           files: |
             release-assets/Talksify.dmg
             release-assets/Talksify_${{ steps.meta.outputs.version }}_aarch64.dmg
+            release-assets/Talksify_${{ steps.meta.outputs.version }}_aarch64.app.tar.gz
+            release-assets/Talksify_${{ steps.meta.outputs.version }}_aarch64.app.tar.gz.sig
+            release-assets/latest.json
             release-assets/SHA256SUMS.txt
 
   deploy-pages:

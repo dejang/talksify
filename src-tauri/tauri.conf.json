@@ -53,5 +53,13 @@
     },
     "publisher": "Talksify",
     "category": "public.app-category.productivity"
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY0RENEODdENjcxRTc5QzMKUldURGVSNW5mZGpjOUxoOTNMeFZCU0RQNURrWFN6RUtYUmREQnBEekhZVW1pS1ZEZFYycU5zK08K",
+      "endpoints": [
+        "https://github.com/dejang/talksify/releases/latest/download/latest.json"
+      ]
+    }
   }
 }
