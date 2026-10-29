@@ -7230,7 +7230,7 @@ dependencies = [
 
 [[package]]
 name = "talksify"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "core-foundation 0.10.1",
  "core-graphics",
