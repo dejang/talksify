@@ -2,17 +2,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mistralrs::blocking::BlockingModel;
-use mistralrs::{GgufModelBuilder, TextMessageRole, TextMessages};
+use mistralrs::{GgufModelBuilder, RequestBuilder, TextMessageRole, TextMessages};
 
 use crate::raw_transcript::RawTranscript;
-use crate::text_format::TextFormatter;
+use crate::text_format::{remove_repeats, TextFormatter};
 
 pub(crate) struct LlmPostProcessor {
     model_dir: PathBuf,
     model: Option<BlockingModel>,
     is_warm: bool,
     clean_prompt: &'static str,
-    clean_examples: Vec<(&'static str, &'static str)>,
     formatter: TextFormatter,
     tokenizer_id: String,
 }
@@ -44,61 +43,7 @@ of a sentence. Remove the false period, lowercase the next word, and join the se
 4. Fix punctuation, capitalization, and broken spoken grammar so the sentence reads naturally. \
 Use a colon (\":\") when a clause introduces what comes next (such as \"the problem is this\", \
 \"here's what I think\", \"the plan is\", or \"a few things we need\").",
-            clean_examples: vec![
-                (
-                    "So, what is happening? I am speaking. What is what are you seeing?",
-                    "So, what is happening? I am speaking. What are you seeing?",
-                ),
-                (
-                    "So I don't know what this is, but I don't think I want to I I think I actually want the false starts to be cleaned up. I think I would like the transcription to be clean, nice feeling good, and I think the model can do it.",
-                    "So I don't know what this is, I think I actually want the false starts to be cleaned up. I think I would like the transcription to be clean, nice, and feeling good, and I think the model can do it.",
-                ),
-                (
-                    "We need to change the prompt because it is, we have some rules that are messing it up.",
-                    "We need to change the prompt because we have some rules that are messing it up.",
-                ),
-                (
-                    "Nice. So maybe we could also Clean up the settings page and really simplify the menu.",
-                    "Nice. So maybe we could also clean up the settings page and really simplify the menu.",
-                ),
-                (
-                    "I tried the new version and it works, but it is. Still a bit slow when the file is large.",
-                    "I tried the new version and it works, but it is still a bit slow when the file is large.",
-                ),
-                (
-                    "We should keep the old API around, but not. Forever, just until the clients migrate, if that makes sense.",
-                    "We should keep the old API around, but not forever, just until the clients migrate, if that makes sense.",
-                ),
-                (
-                    "These are small changes, but they're not. Complete rewrites if that makes sense.",
-                    "These are small changes, but they're not complete rewrites, if that makes sense.",
-                ),
-                (
-                    "For the party we still need. Chairs, plates, a speaker and some ice.",
-                    "For the party we still need: chairs, plates, a speaker, and some ice.",
-                ),
-                (
-                    "We still need a few things, chairs, plates, a speaker, and some ice.",
-                    "We still need a few things: chairs, plates, a speaker, and some ice.",
-                ),
-                (
-                    "The main issue is this. The database connection keeps dropping under load.",
-                    "The main issue is this: the database connection keeps dropping under load.",
-                ),
-                (
-                    "Here's what I think. We should wait until the data comes in.",
-                    "Here's what I think: we should wait until the data comes in.",
-                ),
-                (
-                    "I think maybe we should really move the standup to ten, hopefully.",
-                    "I think maybe we should really move the standup to ten, hopefully.",
-                ),
-                (
-                    "Can you check whether the server is down?",
-                    "Can you check whether the server is down?",
-                ),
-            ],
-            tokenizer_id: "Qwen/Qwen3-0.6B".into(),
+            tokenizer_id: "Qwen/Qwen3.5-0.8B".into(),
         }
     }
 
@@ -118,7 +63,13 @@ Use a colon (\":\") when a clause introduces what comes next (such as \"the prob
             Ok(model) => {
                 log::info!("[llm] model loaded in {:?}, warming...", start.elapsed());
                 let warm_start = std::time::Instant::now();
-                match model.chat("hi") {
+                let warmup = RequestBuilder::from(
+                    TextMessages::new()
+                        .enable_thinking(false)
+                        .add_message(TextMessageRole::User, "hi"),
+                )
+                .set_sampler_max_len(8);
+                match model.send_chat_request(warmup) {
                     Ok(_) => {
                         log::info!("[llm] warmup in {:?}", warm_start.elapsed());
                         self.model = Some(model);
@@ -148,14 +99,16 @@ Use a colon (\":\") when a clause introduces what comes next (such as \"the prob
         if raw_text.is_empty() {
             return String::new();
         }
-        let fixed = self.formatter.format_lists(&basic_case_fix(&raw_text));
+        let fixed = self
+            .formatter
+            .format_lists(&remove_repeats(&basic_case_fix(&raw_text)));
         if self.model.is_none() {
             log::info!("[llm] no model, applying basic case fix");
             return fixed;
         }
         log::info!("[llm] input: {raw_text:?}");
         let start = std::time::Instant::now();
-        let result = self.infer(&raw_text, self.clean_prompt, &self.clean_examples);
+        let result = self.infer(&raw_text, self.clean_prompt);
         let elapsed = start.elapsed();
         if elapsed.as_secs() > 10 {
             log::warn!("[llm] took {elapsed:?}, falling back");
@@ -166,7 +119,7 @@ Use a colon (\":\") when a clause introduces what comes next (such as \"the prob
             return fixed;
         }
         log::info!("[llm] output ({elapsed:?}): {result:?}");
-        self.formatter.format_lists(&result)
+        self.formatter.format_lists(&remove_repeats(&result))
     }
 
     fn load_model(&self, gguf_path: &Path) -> Result<BlockingModel, String> {
@@ -194,24 +147,18 @@ Use a colon (\":\") when a clause introduces what comes next (such as \"the prob
         Ok(BlockingModel::new(model, Arc::new(rt)))
     }
 
-    fn infer(
-        &self,
-        transcript: &str,
-        prompt: &str,
-        examples: &[(&'static str, &'static str)],
-    ) -> String {
+    fn infer(&self, transcript: &str, prompt: &str) -> String {
         let Some(ref model) = self.model else {
             return String::new();
         };
-        let mut request = TextMessages::new()
-            .enable_thinking(false)
-            .add_message(TextMessageRole::System, prompt);
-        for (input, output) in examples {
-            request = request
-                .add_message(TextMessageRole::User, input)
-                .add_message(TextMessageRole::Assistant, output);
-        }
-        request = request.add_message(TextMessageRole::User, transcript);
+        // Cleaned text is never longer than the transcript; the cap stops a model that never ends.
+        let request = RequestBuilder::from(
+            TextMessages::new()
+                .enable_thinking(false)
+                .add_message(TextMessageRole::System, prompt)
+                .add_message(TextMessageRole::User, transcript),
+        )
+        .set_sampler_max_len(transcript.split_whitespace().count() * 2 + 32);
         match model.send_chat_request(request) {
             Ok(response) => response
                 .choices

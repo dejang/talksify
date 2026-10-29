@@ -10,7 +10,7 @@ Every task below references part IDs from that file. When in doubt, the board wi
 | Platform | macOS + Linux |
 | Language | Rust + Tauri 2 |
 | STT | Nvidia Parakeet via sherpa-onnx |
-| LLM | Qwen 0.6B via mistral.rs |
+| LLM | Qwen3.5 0.8B via mistral.rs |
 | Text injection | CGEvent (macOS) / xdotool (Linux) |
 | Feedback | Floating overlay HUD (Tauri window) |
 | Auto-start | Yes (launch agent / systemd user service) |
@@ -109,7 +109,7 @@ hotkey → Event Handler → Transcriber → AudioDevice
 - [x] `src-tauri/src/raw_transcript.rs` — `sentences: Vec<String>`, `push_words`, `clear`, `to_joined_string`
 - [x] `src-tauri/src/llm_postprocessor.rs` — GgufModelBuilder + BlockingModel, real inference via model.chat()
 - [x] Wire real mistralrs model
-- [ ] Model bundled at `src-tauri/models/qwen-0.6b/` (download Qwen2.5-0.5B GGUF)
+- [ ] Model bundled at `src-tauri/models/qwen-0.6b/` (Qwen3.5-0.8B GGUF via `scripts/download-models.sh`)
 - [x] Prompt template for filler removal + punctuation + formatting
 - [x] Unit tests: fallback join, empty transcript, warm_up (5/5 pass)
 
@@ -185,7 +185,7 @@ src-tauri/models/
 ├── parakeet/          # Nvidia Parakeet ONNX model (sherpa-onnx format)
 │   ├── model.onnx
 │   └── tokens.txt
-└── qwen-0.6b/         # Qwen 0.6B GGUF (mistral.rs format)
+└── qwen-0.6b/         # Qwen3.5 0.8B GGUF (mistral.rs format)
     └── model.gguf
 ```
 

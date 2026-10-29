@@ -8,7 +8,7 @@ Audio is captured from your mic and passed through a three-stage local pipeline:
 
 1. **Voice activity detection (Silero VAD)** splits speech at natural pauses so long dictations are processed in chunks.
 2. **Speech-to-text (Nvidia Parakeet TDT 0.6B v3)** transcribes each chunk via `sherpa-onnx` (int8, ~490 MB).
-3. **Cleanup (Qwen3-0.6B + rules)** strips filler words (`um`, `uh`), formats spoken lists, fixes punctuation and capitalization, and resolves self-corrections ("no wait, make that Tuesday") via `mistral.rs` on Metal (Q8_0 GGUF, ~610 MB).
+3. **Cleanup (Qwen3.5-0.8B + rules)** strips filler words (`um`, `uh`), collapses repeated words and phrases ("this is this is"), formats spoken lists, fixes punctuation and capitalization, and resolves self-corrections ("no wait, make that Tuesday") via `mistral.rs` on Metal (Q6_K GGUF, ~640 MB).
 
 Once processed, the text is typed into the active app (or pasted via the clipboard if the app doesn't accept synthetic keystrokes). If the LLM isn't available, dictation falls back to basic rule-based cleanup.
 

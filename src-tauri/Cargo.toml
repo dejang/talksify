@@ -34,7 +34,7 @@ objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSPasteboardItem"] }
 objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSString"] }
 sherpa-onnx = "2.0"
-mistralrs = { version = "0.8", features = ["metal"] }
+mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs", branch = "master", features = ["metal"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 [lints.clippy]
 all = { level = "deny", priority = -2 }

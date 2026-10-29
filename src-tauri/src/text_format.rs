@@ -257,6 +257,55 @@ fn split_items(list: &str) -> Vec<&str> {
     items
 }
 
+/// Collapses words or phrases said twice in a row ("this is this is" -> "this is"), longest
+/// first, ignoring case and punctuation. Keeps the second copy, which flows into the rest.
+pub(crate) fn remove_repeats(text: &str) -> String {
+    text.lines()
+        .map(remove_line_repeats)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn remove_line_repeats(line: &str) -> String {
+    let mut words: Vec<String> = line.split_whitespace().map(str::to_string).collect();
+    let mut keys: Vec<String> = words.iter().map(String::as_str).map(repeat_key).collect();
+    let mut i = 0;
+    while i < words.len() {
+        let longest = (words.len() - i) / 2;
+        let Some(span) = (1..=longest).rev().find(|&n| keys[i..i + n] == keys[i + n..i + 2 * n])
+        else {
+            i += 1;
+            continue;
+        };
+        let dropped_capital = words[i].starts_with(char::is_uppercase);
+        words.drain(i..i + span);
+        keys.drain(i..i + span);
+        // The kept copy now starts where the dropped one did, so it takes over its case.
+        let kept = &mut words[i];
+        if dropped_capital {
+            let mut capitalized = String::with_capacity(kept.len());
+            push_capitalized(&mut capitalized, kept);
+            *kept = capitalized;
+        } else if keys[i] != "i"
+            && !keys[i].starts_with("i'")
+            && !kept.chars().skip(1).any(char::is_uppercase)
+        {
+            *kept = kept.to_lowercase();
+        }
+    }
+    words.join(" ")
+}
+
+/// A word as `remove_repeats` compares it: lower-cased, without surrounding punctuation.
+fn repeat_key(word: &str) -> String {
+    let core = word.trim_matches(|c: char| !c.is_alphanumeric());
+    if core.is_empty() {
+        word.to_string()
+    } else {
+        core.replace('’', "'").to_lowercase()
+    }
+}
+
 /// Appends `text` to `out` with its first letter upper-cased.
 fn push_capitalized(out: &mut String, text: &str) {
     let mut chars = text.chars();
@@ -303,6 +352,33 @@ mod tests {
             "Er kommt später, er hat noch ein Meeting.",
         ] {
             assert_eq!(f.strip_fillers(text), text);
+        }
+    }
+
+    #[test]
+    fn collapses_repeated_words_and_phrases() {
+        for (text, want) in [
+            ("Maybe this is this is the fix.", "Maybe this is the fix."),
+            ("So, we could try we could try a smaller batch", "So, we could try a smaller batch"),
+            ("We should ship it. We should ship it on Monday", "We should ship it on Monday"),
+            ("put it in the in the drawer", "put it in the drawer"),
+            ("Are are you coming tonight?", "Are you coming tonight?"),
+            ("it might be this is. This is fine", "it might be this is fine"),
+            ("the the cat the the cat is asleep", "the cat is asleep"),
+            ("no no no", "no"),
+        ] {
+            assert_eq!(remove_repeats(text), want);
+        }
+    }
+
+    #[test]
+    fn keeps_text_without_back_to_back_repeats() {
+        for text in [
+            "This is what it is.",
+            "I think the API is fine. The API works.",
+            "The plan is:\n1. Refactor the parser.\n2. Add more tests.",
+        ] {
+            assert_eq!(remove_repeats(text), text);
         }
     }
 
