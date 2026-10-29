@@ -11,7 +11,8 @@
     "lint": "oxlint && ast-grep scan --globs '!src-tauri/target' --globs '!dist'",
     "lint:oxlint": "oxlint",
     "lint:ast-grep": "ast-grep scan --globs '!src-tauri/target' --globs '!dist'",
-    "lint:ast-grep:test": "ast-grep test"
+    "lint:ast-grep:test": "ast-grep test",
+    "release": "./scripts/release.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
