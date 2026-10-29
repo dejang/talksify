@@ -257,8 +257,8 @@ fn split_items(list: &str) -> Vec<&str> {
     items
 }
 
-/// Collapses words or phrases said twice in a row ("this is this is" -> "this is"), longest
-/// first, ignoring case and punctuation. Keeps the second copy, which flows into the rest.
+/// Removes a word or phrase said twice in a row: "this is this is" becomes "this is".
+/// Punctuation inside a repeat blocks it; trailing punctuation on the second copy stays.
 pub(crate) fn remove_repeats(text: &str) -> String {
     text.lines()
         .map(remove_line_repeats)
@@ -268,42 +268,47 @@ pub(crate) fn remove_repeats(text: &str) -> String {
 
 fn remove_line_repeats(line: &str) -> String {
     let mut words: Vec<String> = line.split_whitespace().map(str::to_string).collect();
-    let mut keys: Vec<String> = words.iter().map(String::as_str).map(repeat_key).collect();
     let mut i = 0;
     while i < words.len() {
         let longest = (words.len() - i) / 2;
-        let Some(span) = (1..=longest).rev().find(|&n| keys[i..i + n] == keys[i + n..i + 2 * n])
+        let Some(span) = (1..=longest)
+            .rev()
+            .find(|&n| is_repeat(&words[i..i + n], &words[i + n..i + 2 * n]))
         else {
             i += 1;
             continue;
         };
-        let dropped_capital = words[i].starts_with(char::is_uppercase);
+        let capitalize = words[i].starts_with(char::is_uppercase);
         words.drain(i..i + span);
-        keys.drain(i..i + span);
-        // The kept copy now starts where the dropped one did, so it takes over its case.
-        let kept = &mut words[i];
-        if dropped_capital {
-            let mut capitalized = String::with_capacity(kept.len());
-            push_capitalized(&mut capitalized, kept);
-            *kept = capitalized;
-        } else if keys[i] != "i"
-            && !keys[i].starts_with("i'")
-            && !kept.chars().skip(1).any(char::is_uppercase)
-        {
-            *kept = kept.to_lowercase();
+        if capitalize && !words[i].starts_with(char::is_uppercase) {
+            let mut capitalized = String::with_capacity(words[i].len());
+            push_capitalized(&mut capitalized, &words[i]);
+            words[i] = capitalized;
         }
     }
     words.join(" ")
 }
 
-/// A word as `remove_repeats` compares it: lower-cased, without surrounding punctuation.
-fn repeat_key(word: &str) -> String {
-    let core = word.trim_matches(|c: char| !c.is_alphanumeric());
-    if core.is_empty() {
-        word.to_string()
-    } else {
-        core.replace('’', "'").to_lowercase()
+fn is_repeat(first: &[String], second: &[String]) -> bool {
+    for (k, (a, b)) in first.iter().zip(second.iter()).enumerate() {
+        let b = if k + 1 == first.len() {
+            b.trim_end_matches([',', '.', ';', ':', '!', '?'])
+        } else {
+            b.as_str()
+        };
+        if a.contains([',', '.', ';', ':', '!', '?'])
+            || b.contains([',', '.', ';', ':', '!', '?'])
+            || !a.chars().any(char::is_alphabetic)
+        {
+            return false;
+        }
+        let same =
+            a == b || (k == 0 && a.starts_with(char::is_uppercase) && a.to_lowercase() == b);
+        if !same {
+            return false;
+        }
     }
+    true
 }
 
 /// Appends `text` to `out` with its first letter upper-cased.
@@ -358,14 +363,31 @@ mod tests {
     #[test]
     fn collapses_repeated_words_and_phrases() {
         for (text, want) in [
-            ("Maybe this is this is the fix.", "Maybe this is the fix."),
-            ("So, we could try we could try a smaller batch", "So, we could try a smaller batch"),
-            ("We should ship it. We should ship it on Monday", "We should ship it on Monday"),
-            ("put it in the in the drawer", "put it in the drawer"),
-            ("Are are you coming tonight?", "Are you coming tonight?"),
-            ("it might be this is. This is fine", "it might be this is fine"),
-            ("the the cat the the cat is asleep", "the cat is asleep"),
-            ("no no no", "no"),
+            (
+                "Like this would be this is this is stupid, we should just give it the prompt.",
+                "Like this would be this is stupid, we should just give it the prompt.",
+            ),
+            (
+                "Okay, I feel like I feel like if we do generic then we can just write some prose.",
+                "Okay, I feel like if we do generic then we can just write some prose.",
+            ),
+            (
+                "Check another checkbox and and describe how it is indexable or what this this is.",
+                "Check another checkbox and describe how it is indexable or what this is.",
+            ),
+            (
+                "Okay, let's let's finish wrapping up this design.",
+                "Okay, let's finish wrapping up this design.",
+            ),
+            (
+                "Wait. You can't you can't put that in the test.",
+                "Wait. You can't put that in the test.",
+            ),
+            (
+                "I think I I actually want the false starts to be cleaned up.",
+                "I think I actually want the false starts to be cleaned up.",
+            ),
+            ("I don't know what this is this is.", "I don't know what this is."),
         ] {
             assert_eq!(remove_repeats(text), want);
         }
@@ -376,6 +398,10 @@ mod tests {
         for text in [
             "This is what it is.",
             "I think the API is fine. The API works.",
+            "We should ship it. We should ship it on Monday.",
+            "It might be this is. This is fine.",
+            "Whatever hints we can give it, it would be very welcome.",
+            "Yeah, yeah, I think we should put this in the design.",
             "The plan is:\n1. Refactor the parser.\n2. Add more tests.",
         ] {
             assert_eq!(remove_repeats(text), text);
