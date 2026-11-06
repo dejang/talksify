@@ -1,5 +1,5 @@
 {
-  "format": "understudy.design/1",
+  "format": "floorplan.design/1",
   "id": "local-whisperflow",
   "title": "Talksify",
   "revision": 226,
@@ -17,7 +17,7 @@
           "kind": "event",
           "signature": "fn() -> Event<DictationStarted>",
           "confirmed": false,
-          "draftedBy": "student"
+          "draftedBy": "assistant"
         },
         {
           "id": "stop",
@@ -25,7 +25,7 @@
           "kind": "event",
           "signature": "fn() -> Event<DictationStopped>",
           "confirmed": false,
-          "draftedBy": "student"
+          "draftedBy": "assistant"
         }
       ],
       "state": [
@@ -40,7 +40,7 @@
           "initial": "idle",
           "durability": "memory",
           "confirmed": false,
-          "draftedBy": "student"
+          "draftedBy": "assistant"
         }
       ],
       "transitions": [
@@ -72,7 +72,7 @@
       "kind": "module",
       "name": "Text Injector",
       "confirmed": false,
-      "draftedBy": "student",
+      "draftedBy": "assistant",
       "responsibility": "Types or pastes the final text into the focused application. Uses CGEvent (macOS) or xdotool/ydotool (Linux). Falls back to clipboard+paste.",
       "operations": [
         {
@@ -81,7 +81,7 @@
           "kind": "command",
           "signature": "fn type_text(&self, text: &CleanText) -> Result<()>",
           "confirmed": false,
-          "draftedBy": "student"
+          "draftedBy": "assistant"
         },
         {
           "id": "paste_text",
@@ -93,7 +93,7 @@
             "focus lost"
           ],
           "confirmed": false,
-          "draftedBy": "student"
+          "draftedBy": "assistant"
         }
       ],
       "state": [],
@@ -105,7 +105,7 @@
       "kind": "store",
       "name": "Configuration",
       "confirmed": false,
-      "draftedBy": "student",
+      "draftedBy": "assistant",
       "responsibility": "Stores user settings: hotkey binding, model paths, LLM model name, audio device.",
       "operations": [],
       "state": [],
@@ -126,7 +126,8 @@
           "errors": [
             "TranscriberError::Init"
           ],
-          "confirmed": true
+          "confirmed": true,
+          "name": "start_transcribing"
         },
         {
           "id": "op-2",
@@ -135,19 +136,22 @@
           "errors": [
             "TranscriberError::Stop"
           ],
-          "confirmed": true
+          "confirmed": true,
+          "name": "stop_transcribing"
         },
         {
           "id": "op-3",
           "kind": "query",
           "signature": "fn is_transcribing(&self) -> bool",
-          "confirmed": true
+          "confirmed": true,
+          "name": "is_transcribing"
         },
         {
           "id": "op-4",
           "kind": "command",
           "signature": "fn new(config: &Config, on_level: Arc<dyn Fn(f32) + Send + Sync>) -> Result<Self, TranscriberError>",
-          "confirmed": true
+          "confirmed": true,
+          "name": "new"
         },
         {
           "id": "audio-level",
@@ -164,27 +168,32 @@
         {
           "id": "is_transcribing",
           "type": "AtomicBool",
-          "confirmed": true
+          "confirmed": true,
+          "name": "is_transcribing"
         },
         {
           "id": "device",
           "type": "JoinHandle<()>",
-          "confirmed": true
+          "confirmed": true,
+          "name": "device"
         },
         {
           "id": "stt",
           "type": "JoinHandle<()>",
-          "confirmed": true
+          "confirmed": true,
+          "name": "stt"
         },
         {
           "id": "raw_transcript",
           "type": "Mutext<RawTranscript>",
-          "confirmed": true
+          "confirmed": true,
+          "name": "raw_transcript"
         },
         {
           "id": "llm_postprocessor",
           "type": "JoinHandle<()>",
-          "confirmed": true
+          "confirmed": true,
+          "name": "llm_postprocessor"
         },
         {
           "id": "stt-audio",
@@ -235,13 +244,15 @@
           "id": "op-1",
           "kind": "command",
           "signature": "fn start_capture(&mut self) -> Result<HeapCons<f32>, AudioError>",
-          "confirmed": true
+          "confirmed": true,
+          "name": "start_capture"
         },
         {
           "id": "op-2",
           "kind": "command",
           "signature": "fn stop_capture(&mut self) -> Result<(), AudioError>",
-          "confirmed": true
+          "confirmed": true,
+          "name": "stop_capture"
         },
         {
           "id": "op-3",
@@ -286,7 +297,8 @@
           "id": "op-1",
           "kind": "command",
           "signature": "push_audio(&mut self, audio: &[f32])",
-          "confirmed": true
+          "confirmed": true,
+          "name": "push_audio"
         },
         {
           "id": "op-2",
@@ -300,7 +312,8 @@
         {
           "id": "scratch_buffer",
           "type": "Vec<f32>",
-          "confirmed": true
+          "confirmed": true,
+          "name": "scratch_buffer"
         },
         {
           "id": "vad",
@@ -324,13 +337,15 @@
           "id": "op-1",
           "kind": "command",
           "signature": "fn push_audio(&mut self, audio: &[f32])",
-          "confirmed": true
+          "confirmed": true,
+          "name": "push_audio"
         },
         {
           "id": "op-2",
           "kind": "command",
           "signature": "fn subscribe(&mut self, on_transcribe: Box<dyn Fn(String) + Send>)",
-          "confirmed": true
+          "confirmed": true,
+          "name": "subscribe"
         },
         {
           "id": "op-3",
@@ -358,14 +373,16 @@
           "id": "op-1",
           "kind": "command",
           "signature": "fn push_words(&mut self, words: String)",
-          "confirmed": true
+          "confirmed": true,
+          "name": "push_words"
         }
       ],
       "state": [
         {
           "id": "sentences",
           "type": "Vec<String>",
-          "confirmed": true
+          "confirmed": true,
+          "name": "sentences"
         }
       ],
       "transitions": [],
@@ -382,7 +399,8 @@
           "id": "op-1",
           "kind": "command",
           "signature": "fn clean_transcript(raw: RawTranscript)",
-          "confirmed": true
+          "confirmed": true,
+          "name": "clean_transcript"
         }
       ],
       "state": [],
@@ -746,7 +764,7 @@
     {
       "id": "q1",
       "number": 1,
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "What does WhisperFlow do? (a few sentences — what the user does, what happens, what comes out)",
       "why": "I need the core flow to know what we're replicating locally.",
       "options": [
@@ -762,7 +780,7 @@
     {
       "id": "q2",
       "number": 2,
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "When you say \"running all locally\" — what does that mean to you?",
       "why": "It could mean no cloud API calls, self-hosted on your own server, or fully offline on one machine.",
       "options": [
@@ -779,7 +797,7 @@
     {
       "id": "q3",
       "number": 3,
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "What's the link? (GitHub repo, website, etc.)",
       "why": "I'll read it to understand the flow before we design the local version.",
       "status": "answered",
@@ -792,7 +810,7 @@
       "id": "q4",
       "number": 4,
       "about": "stt",
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "Which local STT engine are you thinking?",
       "why": "Determines latency, accuracy, and resource requirements.",
       "options": [
@@ -811,7 +829,7 @@
       "id": "q5",
       "number": 5,
       "about": "postprocess",
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "For the LLM post-processing step, what do you have in mind?",
       "why": "A small local model can clean text but quality varies; this affects which model and how much cleanup to expect.",
       "options": [
@@ -829,7 +847,7 @@
     {
       "id": "q6",
       "number": 6,
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "What platform is this for?",
       "why": "Hotkey handling and text injection are very different on macOS vs Linux vs cross-platform.",
       "options": [
@@ -846,7 +864,7 @@
     {
       "id": "q7",
       "number": 7,
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "What language/runtime are you thinking for the app itself?",
       "why": "Affects which libraries are available for hotkey, audio, and text injection.",
       "options": [
@@ -866,7 +884,7 @@
       "id": "q8",
       "number": 8,
       "about": "stt",
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "How should Parakeet integrate with the Rust app?",
       "why": "Parakeet is from NVIDIA NeMo (Python). Options: sherpa-onnx (Rust bindings, ONNX runtime), or a Python sidecar process.",
       "options": [
@@ -884,7 +902,7 @@
       "id": "q9",
       "number": 9,
       "about": "postprocess",
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "How should the LLM connect?",
       "why": "Ollama exposes a local HTTP API; llama.cpp has Rust FFI bindings.",
       "options": [
@@ -902,7 +920,7 @@
       "id": "q10",
       "number": 10,
       "about": "stt",
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "Should transcription stream partial results while speaking, or wait until you stop?",
       "why": "Streaming gives live feedback but adds complexity; batch is simpler and Parakeet is fast.",
       "options": [
@@ -919,7 +937,7 @@
       "id": "q11",
       "number": 11,
       "about": "feedback",
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "How should the user see feedback (recording, processing, done)?",
       "why": "Affects which UI libraries we need and how complex the overlay is.",
       "options": [
@@ -938,7 +956,7 @@
       "id": "q12",
       "number": 12,
       "about": "hotkey",
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "Any preference for the global hotkey library?",
       "why": "Rust options: device-query (simple), rdev (low-level), or tauri-plugin-global-shortcut (if using Tauri for overlay).",
       "options": [
@@ -956,7 +974,7 @@
       "id": "q13",
       "number": 13,
       "about": "inject",
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "For text injection, which approach do you prefer?",
       "why": "Simulated keystrokes are universal but slow for long text; clipboard+paste is fast but clobbers the clipboard; CGEvent/xdotool is fast but platform-specific.",
       "options": [
@@ -974,7 +992,7 @@
     {
       "id": "q14",
       "number": 14,
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "Should the app auto-start on login?",
       "why": "Affects whether we need a launch agent (macOS) or systemd user service (Linux).",
       "options": [
@@ -991,7 +1009,7 @@
     {
       "id": "q15",
       "number": 15,
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "Which failure scenarios should we design recovery for first?",
       "why": "Every failure needs a strategy; these are the most likely ones for a local dictation app.",
       "options": [
@@ -1007,7 +1025,7 @@
       "id": "q16",
       "number": 16,
       "about": "inject",
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "If text injection fails (e.g. accessibility permission denied), what should happen?",
       "why": "The user spoke something — losing it is the worst outcome.",
       "options": [
@@ -1022,7 +1040,7 @@
       "id": "q17",
       "number": 17,
       "about": "module-1",
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "What goes in this module?",
       "why": "I see you added it — want me to help fill it in, or are you sketching something?",
       "status": "parked"
@@ -1031,7 +1049,7 @@
       "id": "q18",
       "number": 18,
       "about": "module-1",
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "Does Transcriber replace both the `capture` and `stt` parts, or does it wrap them?",
       "why": "If Transcriber owns audio + STT internally, the top-level capture and stt parts become implementation details inside it.",
       "options": [
@@ -1045,7 +1063,7 @@
       "id": "q19",
       "number": 19,
       "about": "module-1",
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "Should I remove the `stt` part and route through Transcriber, or does Transcriber call `stt` internally (stt stays as a separate part)?",
       "why": "Right now both exist — Transcriber and stt. One should own the STT logic.",
       "options": [
@@ -1062,7 +1080,7 @@
       "id": "q20",
       "number": 20,
       "about": "module-1",
-      "askedBy": "student",
+      "askedBy": "assistant",
       "text": "Who calls `push_audio` on the STT trait?",
       "why": "Determines whether Transcriber is a middleman or AudioDevice talks to STT directly.",
       "options": [
@@ -1079,7 +1097,7 @@
   "proposals": [
     {
       "id": "p1",
-      "by": "student",
+      "by": "assistant",
       "question": "q18",
       "status": "discarded",
       "changes": [
@@ -1226,7 +1244,7 @@
     },
     {
       "id": "p2",
-      "by": "student",
+      "by": "assistant",
       "question": "q19",
       "status": "discarded",
       "changes": [
@@ -1344,7 +1362,7 @@
     },
     {
       "id": "p3",
-      "by": "student",
+      "by": "assistant",
       "status": "accepted",
       "changes": [
         {
@@ -1433,7 +1451,7 @@
     },
     {
       "id": "p4",
-      "by": "student",
+      "by": "assistant",
       "status": "accepted",
       "changes": [
         {
@@ -1472,7 +1490,7 @@
     },
     {
       "id": "p5",
-      "by": "student",
+      "by": "assistant",
       "status": "accepted",
       "changes": [
         {
@@ -1531,7 +1549,7 @@
     },
     {
       "id": "p6",
-      "by": "student",
+      "by": "assistant",
       "status": "accepted",
       "changes": [
         {
@@ -1553,7 +1571,7 @@
     },
     {
       "id": "p7",
-      "by": "student",
+      "by": "assistant",
       "status": "accepted",
       "changes": [
         {
@@ -1759,7 +1777,7 @@
     },
     {
       "id": "p8",
-      "by": "student",
+      "by": "assistant",
       "status": "accepted",
       "changes": [
         {

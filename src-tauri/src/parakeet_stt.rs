@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use sherpa_onnx::{
-    OfflineModelConfig, OfflineRecognizer, OfflineRecognizerConfig,
-    OfflineTransducerModelConfig, SileroVadModelConfig, VadModelConfig, VoiceActivityDetector,
+    OfflineModelConfig, OfflineRecognizer, OfflineRecognizerConfig, OfflineTransducerModelConfig,
+    SileroVadModelConfig, VadModelConfig, VoiceActivityDetector,
 };
 
 use crate::stt::Stt;
@@ -73,7 +73,7 @@ impl ParakeetStt {
             silero_vad: SileroVadModelConfig {
                 model: Some(vad_model.to_string_lossy().to_string()),
                 threshold: 0.5,
-                min_silence_duration: 1.0,
+                min_silence_duration: 3.0,
                 min_speech_duration: 0.25,
                 window_size: vad_window,
                 max_speech_duration: 20.0,
@@ -211,13 +211,20 @@ pub(crate) mod tests {
     /// e.g. `LEI16@24000`.
     pub(crate) fn say(text: &str, data_format: &str, voice: Option<&str>) -> Vec<u8> {
         let thread = std::thread::current().id();
-        let path = std::env::temp_dir().join(format!("talksify-stt-{}-{thread:?}.wav", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "talksify-stt-{}-{thread:?}.wav",
+            std::process::id()
+        ));
         let mut command = std::process::Command::new("say");
         if let Some(voice) = voice {
             command.args(["-v", voice]);
         }
         let status = command
-            .args(["--file-format=WAVE", &format!("--data-format={data_format}"), "-o"])
+            .args([
+                "--file-format=WAVE",
+                &format!("--data-format={data_format}"),
+                "-o",
+            ])
             .arg(&path)
             .arg(text)
             .status()
