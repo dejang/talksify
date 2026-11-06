@@ -1,8 +1,12 @@
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
 
+#[cfg(target_os = "linux")]
+use linux::LinuxTextInjector as PlatformTextInjector;
 #[cfg(target_os = "macos")]
 use macos::MacosTextInjector as PlatformTextInjector;
 #[cfg(target_os = "windows")]
@@ -10,8 +14,10 @@ use windows::WindowsTextInjector as PlatformTextInjector;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum InjectError {
+    #[cfg(target_os = "macos")]
     #[error("accessibility permission denied: {0}")]
     PermissionDenied(String),
+    #[cfg(target_os = "macos")]
     #[error("clipboard error: {0}")]
     Clipboard(String),
     #[error("input simulation error: {0}")]

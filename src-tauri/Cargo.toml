@@ -28,6 +28,11 @@ toml = "0.8"
 cpal = "0.15"
 rtrb = "0.3"
 dirs = "6"
+sherpa-onnx = "2.0"
+tokio = { version = "1", features = ["rt-multi-thread"] }
+# parakeet_stt.rs and llm_postprocessor.rs use these on every platform. CPU inference is the
+# default; the macOS block below layers the `metal` feature on top.
+mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs", branch = "master" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
@@ -35,9 +40,8 @@ core-graphics = "0.25"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSPasteboardItem"] }
 objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSString"] }
-sherpa-onnx = "2.0"
 mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs", branch = "master", features = ["metal"] }
-tokio = { version = "1", features = ["rt-multi-thread"] }
+
 [lints.clippy]
 all = { level = "deny", priority = -2 }
 pedantic = { level = "warn", priority = -1 }
