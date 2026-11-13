@@ -28,7 +28,7 @@ concurrency:
 jobs:
   build-macos:
     name: Build, Sign & Notarize macOS DMG
-    runs-on: macos-14
+    runs-on: macos-15
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
       version: ${{ steps.meta.outputs.version }}
