@@ -4,6 +4,7 @@ use std::sync::Arc;
 use mistralrs::blocking::BlockingModel;
 use mistralrs::{GgufModelBuilder, RequestBuilder, TextMessageRole, TextMessages};
 
+use crate::conventions;
 use crate::raw_transcript::RawTranscript;
 use crate::text_format::{TextFormatter, remove_repeats};
 
@@ -104,13 +105,13 @@ Use a colon (\":\") when a clause introduces what comes next (such as \"the prob
             .format_lists(&remove_repeats(&basic_case_fix(&raw_text)));
         if self.model.is_none() {
             log::info!("[llm] no model, applying basic case fix");
-            return fixed;
+            return conventions::apply(&fixed);
         }
         log::info!("[llm] input: {raw_text:?}");
         let start = std::time::Instant::now();
         let result = self.infer(&raw_text, self.clean_prompt);
         let elapsed = start.elapsed();
-        self.finish_cleanup(&result, fixed, elapsed)
+        conventions::apply(&self.finish_cleanup(&result, fixed, elapsed))
     }
 
     fn finish_cleanup(
@@ -304,6 +305,17 @@ pub(crate) mod tests {
             );
             assert_eq!(proc.finish_cleanup("", "Zzz".into(), elapsed), "Zzz");
         }
+    }
+
+    #[test]
+    fn fallback_applies_conventions_after_lists() {
+        let proc = LlmPostProcessor::new(Path::new("/tmp"));
+        let mut raw = RawTranscript::default();
+        raw.push_words("One, we plan. Two, we build.".into());
+        assert_eq!(proc.clean_transcript(&raw), "1. We plan.\n2. We build.");
+        raw.clear();
+        raw.push_words("Twelve files in dot wav and ten percent.".into());
+        assert_eq!(proc.clean_transcript(&raw), "12 files in .wav and 10%.");
     }
 
     #[test]

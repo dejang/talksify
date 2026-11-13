@@ -54,6 +54,7 @@ src-tauri/core/src/     Tauri-free transcription pipeline
   raw_transcript.rs     Transcript accumulator (board: module-4)
   llm_postprocessor.rs  mistral.rs cleanup (board: module-5)
   text_format.rs        Rule-based filler and list formatting around the LLM (board: module-5)
+  conventions.rs        Numbers, percentages and file extensions as written (board: module-5)
 src-tauri/cli/src/      WAV transcription CLI
   main.rs               Argument parsing and pipeline lifecycle (board: cli)
   file_source.rs        Real-time WAV source (board: file-source)

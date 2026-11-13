@@ -2,6 +2,7 @@
 
 mod audio_device;
 mod audio_source;
+mod conventions;
 mod llm_postprocessor;
 mod parakeet_stt;
 mod raw_transcript;
