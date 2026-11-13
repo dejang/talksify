@@ -439,7 +439,7 @@
       "kind": "module",
       "name": "LLM PostProcessor",
       "confirmed": true,
-      "responsibility": "The LLM PostProcessor incorporates the model running on mistral-rs. We'll prompt and wait for the response.",
+      "responsibility": "The LLM PostProcessor incorporates the model running on mistral-rs. We'll prompt and wait for the response. Applies writing conventions after cleanup: digits for numbers, N% for percentages, .ext for spoken file extensions.",
       "operations": [
         {
           "id": "op-1",
