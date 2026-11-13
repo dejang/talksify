@@ -394,6 +394,17 @@ mod tests {
     }
 
     #[test]
+    fn preserves_single_letter_symbols_before_matching_words() {
+        // An isolated letter can be a symbol or initial, not necessarily a stutter.
+        for letter in 'a'..='z' {
+            for symbol in [letter, letter.to_ascii_uppercase()] {
+                let text = format!("{symbol} {letter}zz");
+                assert_eq!(remove_repeats(&text), text);
+            }
+        }
+    }
+
+    #[test]
     fn keeps_text_without_back_to_back_repeats() {
         for text in [
             "This is what it is.",
