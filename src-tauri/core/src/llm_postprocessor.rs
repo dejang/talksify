@@ -110,16 +110,22 @@ Use a colon (\":\") when a clause introduces what comes next (such as \"the prob
         let start = std::time::Instant::now();
         let result = self.infer(&raw_text, self.clean_prompt);
         let elapsed = start.elapsed();
-        if elapsed.as_secs() > 10 {
-            log::warn!("[llm] took {elapsed:?}, falling back");
-            return fixed;
-        }
+        self.finish_cleanup(&result, fixed, elapsed)
+    }
+
+    fn finish_cleanup(
+        &self,
+        result: &str,
+        fixed: String,
+        elapsed: std::time::Duration,
+    ) -> String {
+        // Inference has already completed; its latency says nothing about text quality.
         if result.is_empty() {
             log::warn!("[llm] empty result, falling back");
             return fixed;
         }
         log::info!("[llm] output ({elapsed:?}): {result:?}");
-        self.formatter.format_lists(&remove_repeats(&result))
+        self.formatter.format_lists(&remove_repeats(result))
     }
 
     fn load_model(&self, gguf_path: &Path) -> Result<BlockingModel, String> {
@@ -285,6 +291,34 @@ pub(crate) mod tests {
         raw.push_words("hello".into());
         raw.push_words("world".into());
         assert_eq!(proc.clean_transcript(&raw), "Hello world");
+    }
+
+    #[test]
+    fn completed_cleanup_is_independent_of_latency() {
+        let proc = LlmPostProcessor::new(Path::new("/tmp"));
+        for seconds in [0, 10, 11, 120] {
+            let elapsed = std::time::Duration::from_secs(seconds);
+            assert_eq!(
+                proc.finish_cleanup("Zephyrs shimmer.", "Zzz".into(), elapsed),
+                "Zephyrs shimmer."
+            );
+            assert_eq!(proc.finish_cleanup("", "Zzz".into(), elapsed), "Zzz");
+        }
+    }
+
+    #[test]
+    fn fallback_preserves_single_letter_symbols_before_matching_words() {
+        let proc = LlmPostProcessor::new(Path::new("/tmp"));
+        for letter in 'a'..='z' {
+            for symbol in [letter, letter.to_ascii_uppercase()] {
+                let mut raw = RawTranscript::default();
+                raw.push_words(format!("{symbol} {letter}zz"));
+                assert_eq!(
+                    proc.clean_transcript(&raw),
+                    format!("{} {letter}zz", letter.to_ascii_uppercase())
+                );
+            }
+        }
     }
 
     #[test]
