@@ -1,3 +1,5 @@
+use crate::audio_source::AudioSource;
+
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{
     FromSample, Host, Sample, SampleFormat, SizedSample, Stream, StreamConfig, StreamError,
@@ -5,10 +7,10 @@ use cpal::{
 use rubato::{FftFixedIn, Resampler};
 
 pub(crate) type HeapProd<T> = rtrb::Producer<T>;
-pub(crate) type HeapCons<T> = rtrb::Consumer<T>;
+pub type HeapCons<T> = rtrb::Consumer<T>;
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum AudioError {
+pub enum AudioError {
     #[error("audio device unavailable")]
     DeviceUnavailable,
     #[error("stream error: {0}")]
@@ -17,12 +19,12 @@ pub(crate) enum AudioError {
 
 /// Native layout of the captured samples: interleaved `channels` at `sample_rate` Hz.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct InputFormat {
-    pub(crate) sample_rate: u32,
-    pub(crate) channels: u16,
+pub struct InputFormat {
+    pub sample_rate: u32,
+    pub channels: u16,
 }
 
-pub(crate) struct AudioDevice {
+pub struct AudioDevice {
     device_name: Option<String>,
     stream: Option<Stream>,
     format: Option<InputFormat>,
@@ -30,7 +32,8 @@ pub(crate) struct AudioDevice {
 }
 
 impl AudioDevice {
-    pub(crate) fn new(device_name: Option<String>) -> Self {
+    #[must_use]
+    pub fn new(device_name: Option<String>) -> Self {
         Self {
             device_name,
             stream: None,
@@ -39,14 +42,28 @@ impl AudioDevice {
         }
     }
 
+    fn find_device(&self, host: &Host) -> Result<cpal::Device, AudioError> {
+        if let Some(name) = &self.device_name {
+            host.input_devices()
+                .map_err(|e| AudioError::StreamError(e.to_string()))?
+                .find(|d| d.name().is_ok_and(|n| n == *name))
+                .ok_or(AudioError::DeviceUnavailable)
+        } else {
+            host.default_input_device()
+                .ok_or(AudioError::DeviceUnavailable)
+        }
+    }
+}
+
+impl AudioSource for AudioDevice {
     /// Layout of the samples `start_capture` delivers; `None` before capture starts.
-    pub(crate) fn input_format(&self) -> Option<InputFormat> {
+    fn input_format(&self) -> Option<InputFormat> {
         self.format
     }
 
     /// Delivers the device's interleaved samples, scaled to f32 in -1..=1 and otherwise
     /// untouched, so the audio callback stays cheap. See [`AudioProcessor`].
-    pub(crate) fn start_capture(&mut self) -> Result<HeapCons<f32>, AudioError> {
+    fn start_capture(&mut self) -> Result<HeapCons<f32>, AudioError> {
         let host = cpal::default_host();
         let device = self.find_device(&host)?;
 
@@ -90,7 +107,7 @@ impl AudioDevice {
         Ok(consumer)
     }
 
-    pub(crate) fn stop_capture(&mut self) -> Result<(), AudioError> {
+    fn stop_capture(&mut self) -> Result<(), AudioError> {
         if let Some(stream) = self.stream.take() {
             stream
                 .pause()
@@ -98,18 +115,6 @@ impl AudioDevice {
             drop(stream);
         }
         Ok(())
-    }
-
-    fn find_device(&self, host: &Host) -> Result<cpal::Device, AudioError> {
-        if let Some(name) = &self.device_name {
-            host.input_devices()
-                .map_err(|e| AudioError::StreamError(e.to_string()))?
-                .find(|d| d.name().is_ok_and(|n| n == *name))
-                .ok_or(AudioError::DeviceUnavailable)
-        } else {
-            host.default_input_device()
-                .ok_or(AudioError::DeviceUnavailable)
-        }
     }
 }
 

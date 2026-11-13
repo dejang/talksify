@@ -1,6 +1,6 @@
 # Implementation Plan — Talksify
 
-**Truth model:** `docs/design.json` (understudy board, rev 216).
+**Truth model:** `docs/design.json` (understudy board, rev 228).
 Every task below references part IDs from that file. When in doubt, the board wins.
 
 ## Decisions (locked)
@@ -28,21 +28,31 @@ Every task below references part IDs from that file. When in doubt, the board wi
 | `inject` | Text Injector | CGEvent / xdotool text injection |
 | `config` | Configuration | User settings store |
 
-### Transcriber code boundary (`boundary-1`)
+### talksify-core crate boundary (`boundary-1`)
 
 | Part | Name | Role |
 |------|------|------|
 | `module-1` | Transcriber | Orchestrator. Owns 3 worker threads. Black-box API. |
+| `audio-source` | AudioSource | Native interleaved f32 audio through a ring buffer |
 | `module-2` | AudioDevice | cpal mic capture, lock-free HeapProd/HeapCons queue |
 | `contract-1` | STT (trait) | `push_audio(&[f32])`, `subscribe(on_transcribe)` |
 | `module-3` | ParakeetSTT | Implements STT trait, warm thread, sherpa-onnx |
 | `module-4` | RawTranscript | `sentences: Vec<String>`, `push_words(String)` |
 | `module-5` | LLM PostProcessor | mistral.rs, warm thread, `clean_transcript(RawTranscript)` |
 
+### CLI process boundary (`talksify-cli`)
+
+| Part | Name | Role |
+|------|------|------|
+| `cli` | talksify-cli | Transcribes WAV files and prints cleaned text |
+| `file-source` | FileSource | Real-time WAV playback in 10 ms blocks |
+
 ### Connections
 
 ```
-hotkey → Event Handler → Transcriber → AudioDevice
+hotkey → Event Handler → Transcriber → AudioSource → AudioDevice
+                                           AudioSource → FileSource
+talksify-cli ───────────→ Transcriber
                          Transcriber → STT trait → ParakeetSTT
                          Transcriber → RawTranscript
                          Transcriber → LLM PostProcessor
@@ -51,7 +61,7 @@ hotkey → Event Handler → Transcriber → AudioDevice
 
 ### Flow
 
-1. App start: `Transcriber::new(config)` spawns warm ParakeetSTT + LLM threads
+1. App start: `Transcriber::with_default(&config.model_dir, config.audio_device.clone(), on_level)` spawns warm ParakeetSTT + LLM threads
 2. Hotkey press → Event Handler → `Transcriber.start_transcribing()`
 3. Transcriber spawns AudioDevice thread, pulls `HeapCons<f32>`, calls `push_audio` on STT
 4. ParakeetSTT transcribes, calls `on_transcribe` callback → writes to `Mutex<RawTranscript>`
@@ -84,7 +94,7 @@ hotkey → Event Handler → Transcriber → AudioDevice
 
 **Goal:** Mic capture produces f32 samples via lock-free queue.
 
-- [x] `src-tauri/src/audio_device.rs` — cpal stream, `HeapProd<f32>` producer
+- [x] `src-tauri/core/src/audio_device.rs` — cpal stream, `HeapProd<f32>` producer
 - [x] `start_capture() -> Result<HeapCons<f32>, AudioError>`
 - [x] `stop_capture() -> Result<(), AudioError>`
 - [x] Failure: cannot acquire device → return error
@@ -94,8 +104,8 @@ hotkey → Event Handler → Transcriber → AudioDevice
 
 **Goal:** Warm thread accepts audio, produces transcripts via callback.
 
-- [x] `src-tauri/src/stt.rs` — STT trait definition
-- [x] `src-tauri/src/parakeet_stt.rs` — sherpa-onnx OnlineRecognizer (NeMo CTC), streaming decode, endpoint detection
+- [x] `src-tauri/core/src/stt.rs` — STT trait definition
+- [x] `src-tauri/core/src/parakeet_stt.rs` — sherpa-onnx OnlineRecognizer (NeMo CTC), streaming decode, endpoint detection
 - [x] `push_audio(&mut self, audio: &[f32])` — accumulates in `scratch_buffer`
 - [x] `subscribe(on_transcribe)` — registers callback
 - [x] Wire real sherpa-onnx model
@@ -106,8 +116,8 @@ hotkey → Event Handler → Transcriber → AudioDevice
 
 **Goal:** Transcript accumulator + LLM cleanup pipeline.
 
-- [x] `src-tauri/src/raw_transcript.rs` — `sentences: Vec<String>`, `push_words`, `clear`, `to_joined_string`
-- [x] `src-tauri/src/llm_postprocessor.rs` — GgufModelBuilder + BlockingModel, real inference via model.chat()
+- [x] `src-tauri/core/src/raw_transcript.rs` — `sentences: Vec<String>`, `push_words`, `clear`, `to_joined_string`
+- [x] `src-tauri/core/src/llm_postprocessor.rs` — GgufModelBuilder + BlockingModel, real inference via model.chat()
 - [x] Wire real mistralrs model
 - [ ] Model bundled at `src-tauri/models/qwen-0.6b/` (Qwen3.5-0.8B GGUF via `scripts/download-models.sh`)
 - [x] Prompt template for filler removal + punctuation + formatting
@@ -117,7 +127,7 @@ hotkey → Event Handler → Transcriber → AudioDevice
 
 **Goal:** Black-box API wiring all internals together.
 
-- [x] `src-tauri/src/transcriber.rs` — `new(config)`, `start_transcribing()`, `stop_transcribing()`, `is_transcribing()`
+- [x] `src-tauri/core/src/transcriber.rs` — `new(model_dir, make_source, on_level)`, `with_default(model_dir, audio_device, on_level)`, `start_transcribing()`, `stop_transcribing()`, `is_transcribing()`
 - [x] Spawns AudioDevice thread per session (AudioDevice created inside thread for Send safety)
 - [x] Pulls `HeapCons<f32>`, sends to STT thread via channel
 - [x] `on_transcribe` callback writes to `Mutex<RawTranscript>`
@@ -171,10 +181,10 @@ enigo = "0.2"                    # cross-platform input simulation (or core-grap
 
 - All code follows `.ast-grep/rules/` and clippy lints in `Cargo.toml`
 - No `unwrap()` / `expect()` outside `#[cfg(test)]`
-- No ad-hoc `thread::spawn` — all threading goes through Transcriber
+- No ad-hoc `thread::spawn`. Threading goes through Transcriber. One exception: `FileSource` in the CLI owns the thread that plays the file, as cpal's callback thread does for the mic.
 - Comments: max 3 lines, no TODO/FIXME
 - Files: max 600 lines
-- Run `pnpm lint` and `cargo clippy` before committing
+- Run `pnpm lint` and `cargo clippy --workspace --all-targets` before committing
 
 ## Model Bundling
 
