@@ -308,7 +308,7 @@ pub(crate) mod tests {
     // The bundled LLM, or the one LLM_EVAL_MODELS / LLM_EVAL_TOKENIZER point at.
     fn load_eval_model() -> LlmPostProcessor {
         let models = std::env::var_os("LLM_EVAL_MODELS").map_or_else(
-            || Path::new(env!("CARGO_MANIFEST_DIR")).join("models"),
+            || Path::new(env!("CARGO_MANIFEST_DIR")).join("../models"),
             std::path::PathBuf::from,
         );
         let mut proc = LlmPostProcessor::new(&models);

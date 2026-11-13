@@ -1,14 +1,6 @@
-mod audio_device;
 mod config;
 mod event_handler;
 mod inject;
-mod llm_postprocessor;
-mod parakeet_stt;
-mod raw_transcript;
-mod recording;
-mod stt;
-mod text_format;
-mod transcriber;
 mod updater;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,7 +15,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use config::Config;
 use event_handler::AppState;
 use inject::TextInjector;
-use transcriber::Transcriber;
+use talksify_core::Transcriber;
 use updater::Updater;
 
 fn is_recording(state: &AppState) -> bool {
@@ -163,8 +155,9 @@ pub fn run() {
             let on_level = Arc::new(move |level: f32| {
                 let _ = level_handle.emit("audio-level", level);
             });
-            let transcriber = Transcriber::new(&config, on_level)
-                .map_err(|e| format!("transcriber init: {e}"))?;
+            let transcriber =
+                Transcriber::with_default(&config.model_dir, config.audio_device.clone(), on_level)
+                    .map_err(|e| format!("transcriber init: {e}"))?;
 
             let app_state = AppState {
                 transcriber: Mutex::new(transcriber),

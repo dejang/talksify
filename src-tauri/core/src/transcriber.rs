@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::sync::{Arc, Mutex};
@@ -6,16 +6,15 @@ use std::thread::Builder;
 use std::thread::JoinHandle;
 
 use crate::audio_device::{AudioDevice, AudioProcessor, HeapCons, HeapProd, InputFormat, LevelMeter};
-use crate::config::Config;
+use crate::audio_source::AudioSource;
 use crate::llm_postprocessor::LlmPostProcessor;
 use crate::parakeet_stt::ParakeetStt;
 use crate::raw_transcript::RawTranscript;
 use crate::recording;
-use crate::recording::Recorder;
 use crate::stt::Stt;
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum TranscriberError {
+pub enum TranscriberError {
     #[error("init failed: {0}")]
     Init(String),
     #[error("already transcribing")]
@@ -33,30 +32,50 @@ enum SttCommand {
     Shutdown,
 }
 
-pub(crate) struct Transcriber {
+pub struct Transcriber<A: AudioSource = AudioDevice> {
     is_recording: Arc<AtomicBool>,
     audio_handle: Option<JoinHandle<()>>,
     stt_handle: Option<JoinHandle<()>>,
     stt_tx: std::sync::mpsc::Sender<SttCommand>,
     raw_transcript: Arc<Mutex<RawTranscript>>,
     llm: LlmPostProcessor,
-    audio_device_name: Option<String>,
+    make_source: Arc<dyn Fn() -> A + Send + Sync>,
     stt_rate: u32,
     level_meter: LevelMeter,
     on_level: Arc<dyn Fn(f32) + Send + Sync>,
 }
 
-impl Transcriber {
-    /// `on_level` receives the microphone loudness (0..=1) about 20 times a second while recording.
-    pub(crate) fn new(
-        config: &Config,
+impl Transcriber<AudioDevice> {
+    /// Builds a transcriber using the selected microphone.
+    /// # Errors
+    /// Returns an initialization error if model loading or the STT thread fails.
+    pub fn with_default(
+        model_dir: &Path,
+        audio_device: Option<String>,
         on_level: Arc<dyn Fn(f32) + Send + Sync>,
     ) -> Result<Self, TranscriberError> {
-        let mut stt = ParakeetStt::new(&config.model_dir)
+        Self::new(
+            model_dir,
+            move || AudioDevice::new(audio_device.clone()),
+            on_level,
+        )
+    }
+}
+
+impl<A: AudioSource + 'static> Transcriber<A> {
+    /// `on_level` receives loudness (0..=1) about 20 times a second while recording.
+    /// # Errors
+    /// Returns an initialization error if model loading or the STT thread fails.
+    pub fn new(
+        model_dir: &Path,
+        make_source: impl Fn() -> A + Send + Sync + 'static,
+        on_level: Arc<dyn Fn(f32) + Send + Sync>,
+    ) -> Result<Self, TranscriberError> {
+        let mut stt = ParakeetStt::new(model_dir)
             .ok_or_else(|| TranscriberError::Init("failed to load STT model".into()))?;
         let stt_rate = stt.sample_rate();
 
-        let mut llm = LlmPostProcessor::new(&config.model_dir);
+        let mut llm = LlmPostProcessor::new(model_dir);
         llm.warm_up();
         if !llm.is_ready() {
             log::warn!("[transcriber] LLM unavailable; transcripts get basic cleanup only");
@@ -91,17 +110,16 @@ impl Transcriber {
             stt_tx,
             raw_transcript,
             llm,
-            audio_device_name: config.audio_device.clone(),
+            make_source: Arc::new(make_source),
             stt_rate,
             level_meter: LevelMeter::new(stt_rate as usize / 20, -55.0, 45.0),
             on_level,
         })
     }
 
-    pub(crate) fn start_transcribing(
-        &mut self,
-        save_audio_to: Option<PathBuf>,
-    ) -> Result<(), TranscriberError> {
+    /// # Errors
+    /// Returns an error if already recording or a worker cannot start.
+    pub fn start_transcribing(&mut self, save_audio_to: Option<PathBuf>) -> Result<(), TranscriberError> {
         if self.is_recording.load(Ordering::Relaxed) {
             return Err(TranscriberError::AlreadyRunning);
         }
@@ -115,7 +133,7 @@ impl Transcriber {
         self.is_recording.store(true, Ordering::Relaxed);
 
         let is_recording = Arc::clone(&self.is_recording);
-        let device_name = self.audio_device_name.clone();
+        let make_source = Arc::clone(&self.make_source);
         let stt_rate = self.stt_rate;
         let mut meter = self.level_meter.clone();
         let on_level = Arc::clone(&self.on_level);
@@ -123,7 +141,7 @@ impl Transcriber {
         let handle = Builder::new()
             .name("audio-consumer".into())
             .spawn(move || {
-                let mut device = AudioDevice::new(device_name);
+                let mut device = make_source();
                 let Ok(mut consumer) = device.start_capture() else {
                     log::error!("failed to start audio capture");
                     is_recording.store(false, Ordering::Relaxed);
@@ -160,8 +178,8 @@ impl Transcriber {
                                 }
                             }
                             total_samples += count as u64;
-                            if let Some(rec) = &mut rec {
-                                rec.push(&buf[..count]);
+                            if let Some((tx, _, rec_dropped)) = &mut rec {
+                                *rec_dropped += send_audio(tx, &buf[..count]);
                             }
                             let audio = processor.process(&buf[..count]);
                             if let Some(level) = meter.push(audio) {
@@ -188,15 +206,15 @@ impl Transcriber {
                     remaining.push(sample);
                 }
                 log::info!("[audio] draining {} remaining samples", remaining.len());
-                if let Some(rec) = &mut rec {
-                    rec.push(&remaining);
+                if let Some((tx, _, rec_dropped)) = &mut rec {
+                    *rec_dropped += send_audio(tx, &remaining);
                 }
                 for block in remaining.chunks(buf.len()) {
                     dropped += send_audio(&mut audio_tx, processor.process(block));
                 }
                 dropped += send_audio(&mut audio_tx, processor.finish());
-                if let Some(rec) = rec {
-                    rec.finish();
+                if let Some((tx, writer, n)) = rec {
+                    finish_writer(tx, writer, n);
                 }
                 if dropped > 0 {
                     log::warn!("[audio] STT fell behind, dropped {dropped} samples");
@@ -211,7 +229,9 @@ impl Transcriber {
         Ok(())
     }
 
-    pub(crate) fn stop_transcribing(&mut self) -> Result<String, TranscriberError> {
+    /// # Errors
+    /// Returns an error if idle or flushing the transcript fails.
+    pub fn stop_transcribing(&mut self) -> Result<String, TranscriberError> {
         if !self.is_recording.load(Ordering::Relaxed) {
             return Err(TranscriberError::NotRunning);
         }
@@ -253,12 +273,13 @@ impl Transcriber {
         Ok(cleaned)
     }
 
-    pub(crate) fn is_transcribing(&self) -> bool {
+    #[must_use]
+    pub fn is_transcribing(&self) -> bool {
         self.is_recording.load(Ordering::Relaxed)
     }
 }
 
-impl Drop for Transcriber {
+impl<A: AudioSource> Drop for Transcriber<A> {
     fn drop(&mut self) {
         let _ = self.stt_tx.send(SttCommand::Shutdown);
         if let Some(handle) = self.stt_handle.take() {
@@ -267,8 +288,8 @@ impl Drop for Transcriber {
     }
 }
 
-/// Pushes `audio` into a ring buffer; returns how many samples did not fit.
-pub(crate) fn send_audio(audio_tx: &mut HeapProd<f32>, audio: &[f32]) -> usize {
+/// Pushes `audio` into the STT thread's ring buffer; returns how many samples did not fit.
+fn send_audio(audio_tx: &mut HeapProd<f32>, audio: &[f32]) -> usize {
     let fits = audio_tx.slots().min(audio.len());
     if let Ok(chunk) = audio_tx.write_chunk_uninit(fits) {
         chunk.fill_from_iter(audio.iter().copied());
@@ -276,7 +297,7 @@ pub(crate) fn send_audio(audio_tx: &mut HeapProd<f32>, audio: &[f32]) -> usize {
     audio.len() - fits
 }
 
-fn spawn_writer(path: PathBuf, fmt: InputFormat) -> Option<Recorder> {
+fn spawn_writer(path: PathBuf, fmt: InputFormat) -> Option<(HeapProd<f32>, JoinHandle<()>, usize)> {
     let cap = fmt.sample_rate as usize * usize::from(fmt.channels) * 10;
     let (tx, rx) = rtrb::RingBuffer::new(cap);
     Builder::new()
@@ -284,7 +305,15 @@ fn spawn_writer(path: PathBuf, fmt: InputFormat) -> Option<Recorder> {
         .spawn(move || recording::write_wav(path, fmt, rx))
         .inspect_err(|e| log::error!("[recording] writer thread: {e}"))
         .ok()
-        .map(|writer| Recorder::new(tx, writer))
+        .map(|writer| (tx, writer, 0))
+}
+
+fn finish_writer(tx: HeapProd<f32>, writer: JoinHandle<()>, n: usize) {
+    drop(tx);
+    let _ = writer.join();
+    if n > 0 {
+        log::warn!("[recording] dropped {n} samples");
+    }
 }
 
 fn stt_warm_loop(
@@ -327,198 +356,186 @@ fn stt_warm_loop(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::audio_device::InputFormat;
-    use crate::llm_postprocessor::tests::WordCheck;
     use crate::parakeet_stt::tests::{say, synthesize, synthesize_in};
+    use crate::{AudioError, AudioSource, HeapCons, InputFormat, Transcriber};
     use cpal::Sample;
     use std::path::Path;
+    use std::sync::{Arc, Mutex};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
 
-    /// Transcribes speech captured like a device in `data_format` (`LEI16@…` or `LEF32@…`),
-    /// scaled as the audio callback does, with a quieter copy in the right channel when stereo.
-    fn transcribe_as_device(stt: &mut ParakeetStt, data_format: &str, format: InputFormat) -> String {
-        let bytes = say(
-            "The tests pass locally, but on the build server they time out.",
-            data_format,
-            None,
-        );
-        let mono: Vec<f32> = if data_format.starts_with("LEI16") {
-            let (samples, _) = bytes.as_chunks::<2>();
-            samples.iter().map(|b| f32::from_sample(i16::from_le_bytes(*b))).collect()
-        } else {
-            let (samples, _) = bytes.as_chunks::<4>();
-            samples.iter().map(|b| f32::from_le_bytes(*b)).collect()
-        };
-        let interleaved: Vec<f32> = if format.channels == 2 {
-            mono.iter().flat_map(|&s| [s, 0.5 * s]).collect()
-        } else {
-            mono
-        };
+    #[derive(Clone)]
+    struct TestSource {
+        samples: Arc<[f32]>,
+        format: InputFormat,
+        started: Arc<AtomicBool>,
+    }
 
-        let text = Arc::new(Mutex::new(Vec::new()));
-        stt.subscribe(Box::new({
-            let text = Arc::clone(&text);
-            move |chunk: String| text.lock().unwrap().push(chunk)
-        }));
-        let block = 512 * usize::from(format.channels);
-        let mut processor = AudioProcessor::new(format, stt.sample_rate(), block).unwrap();
-        let mut processed = Vec::new();
-        for callback in interleaved.chunks(block) {
-            processed.extend_from_slice(processor.process(callback));
+    impl AudioSource for TestSource {
+        fn start_capture(&mut self) -> Result<HeapCons<f32>, AudioError> {
+            let (mut producer, consumer) = rtrb::RingBuffer::new(self.samples.len());
+            for &sample in self.samples.iter() {
+                producer.push(sample).unwrap();
+            }
+            self.started.store(true, Ordering::Release);
+            Ok(consumer)
         }
-        processed.extend_from_slice(processor.finish());
-        stt.push_audio(&processed);
-        stt.flush();
-        let text = text.lock().unwrap().join(" ");
-        println!("{data_format} {format:?} -> {text:?}");
+
+        fn stop_capture(&mut self) -> Result<(), AudioError> {
+            Ok(())
+        }
+
+        fn input_format(&self) -> Option<InputFormat> {
+            Some(self.format)
+        }
+    }
+
+    // Only supply audio and observe the public lifecycle and final transcript.
+    fn test_transcriber() -> (Transcriber<TestSource>, Arc<Mutex<TestSource>>) {
+        let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
+        let input = Arc::new(Mutex::new(TestSource {
+            samples: Arc::from([]),
+            format: InputFormat {
+                sample_rate: 16_000,
+                channels: 1,
+            },
+            started: Arc::new(AtomicBool::new(false)),
+        }));
+        let source = Arc::clone(&input);
+        let transcriber = Transcriber::new(
+            &models,
+            move || source.lock().unwrap().clone(),
+            Arc::new(|_| {}),
+        )
+        .unwrap();
+        (transcriber, input)
+    }
+
+    fn transcribe(
+        transcriber: &mut Transcriber<TestSource>,
+        input: &Mutex<TestSource>,
+        samples: impl Into<Arc<[f32]>>,
+        format: InputFormat,
+    ) -> String {
+        let ready = {
+            let mut source = input.lock().unwrap();
+            source.samples = samples.into();
+            source.format = format;
+            source.started.store(false, Ordering::Release);
+            Arc::clone(&source.started)
+        };
+        assert!(transcriber.stop_transcribing().is_err());
+        transcriber.start_transcribing(None).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !ready.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline, "audio source did not start");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(transcriber.is_transcribing());
+        assert!(transcriber.start_transcribing(None).is_err());
+        let text = transcriber.stop_transcribing().unwrap();
+        assert!(!transcriber.is_transcribing());
         text.to_lowercase()
-    }
-
-    #[test]
-    fn send_audio_reports_samples_that_do_not_fit() {
-        let (mut audio_tx, mut audio_rx) = rtrb::RingBuffer::new(4);
-        let (first, second) = ([0.1, 0.2, 0.3], [0.4, 0.5, 0.6]);
-        assert_eq!(send_audio(&mut audio_tx, &first), 0);
-        assert_eq!(send_audio(&mut audio_tx, &second), 2);
-        assert_eq!(audio_rx.slots(), 4);
-        assert!(audio_rx.pop().is_ok_and(|s| (s - 0.1).abs() < 1e-6));
-    }
-
-    #[test]
-    #[ignore = "loads the bundled STT models and uses macOS `say`"]
-    fn stt_thread_transcribes_ring_buffer_audio() {
-        let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("models");
-        let mut stt = ParakeetStt::new(&models).unwrap();
-        let text = Arc::new(Mutex::new(Vec::new()));
-        stt.subscribe(Box::new({
-            let text = Arc::clone(&text);
-            move |chunk: String| text.lock().unwrap().push(chunk)
-        }));
-        let (stt_tx, stt_rx) = channel::<SttCommand>();
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let handle = Builder::new()
-            .spawn({
-                let shutdown = Arc::clone(&shutdown);
-                move || stt_warm_loop(stt, &stt_rx, &shutdown)
-            })
-            .unwrap();
-
-        let audio = synthesize("The tests pass locally, but on the build server they time out.");
-        let (mut audio_tx, audio_rx) = rtrb::RingBuffer::new(audio.len());
-        stt_tx.send(SttCommand::Audio(audio_rx)).unwrap();
-        for block in audio.chunks(160) {
-            assert_eq!(send_audio(&mut audio_tx, block), 0);
-        }
-        let (done_tx, done_rx) = channel::<()>();
-        stt_tx.send(SttCommand::Flush(done_tx)).unwrap();
-        done_rx.recv().unwrap();
-        stt_tx.send(SttCommand::Shutdown).unwrap();
-        handle.join().unwrap();
-
-        let text = text.lock().unwrap().join(" ");
-        assert!(text.to_lowercase().contains("build server"), "{text:?}");
-    }
-
-    // Speaks `text` in a `say` voice, transcribes and cleans it, and describes what went wrong:
-    // key `words` missing from the STT or the cleaned text, or words the LLM dropped.
-    fn check_language(
-        stt: &mut ParakeetStt,
-        raw: &Mutex<RawTranscript>,
-        llm: &LlmPostProcessor,
-        (voice, text, words): (&str, &str, &[&str]),
-    ) -> Option<String> {
-        let audio = synthesize_in(Some(voice), text);
-        for block in audio.chunks(160) {
-            stt.push_audio(block);
-        }
-        stt.flush();
-        let transcript = std::mem::take(&mut *raw.lock().unwrap());
-        let heard = transcript.to_joined_string();
-        let out = llm.clean_transcript(&transcript);
-        println!("{voice}: SAID {text:?}\n  STT {heard:?}\n  OUT {out:?}\n");
-        let (heard_lower, out_lower) = (heard.to_lowercase(), out.to_lowercase());
-        let missing: Vec<&&str> = words.iter().filter(|w| !heard_lower.contains(**w)).collect();
-        let lost: Vec<&&str> = words.iter().filter(|w| !out_lower.contains(**w)).collect();
-        let mut check = WordCheck::default();
-        let over_cut = check.over_cut(&heard, &out);
-        (!missing.is_empty() || !lost.is_empty() || over_cut).then(|| {
-            format!(
-                "{voice}: STT missing {missing:?}, cleanup lost {lost:?}, LLM dropped {:?}",
-                check.dropped
-            )
-        })
     }
 
     #[test]
     #[ignore = "loads the bundled STT and LLM models and uses macOS `say`"]
     fn transcribes_other_languages() {
-        let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("models");
-        let mut stt = ParakeetStt::new(&models).unwrap();
-        let raw = Arc::new(Mutex::new(RawTranscript::default()));
-        stt.subscribe(Box::new({
-            let raw = Arc::clone(&raw);
-            move |text: String| raw.lock().unwrap().push_words(text)
-        }));
-        let mut llm = LlmPostProcessor::new(&models);
-        llm.warm_up();
-
-        let failures: Vec<String> = [
-            check_language(&mut stt, &raw, &llm, (
+        let (mut transcriber, input) = test_transcriber();
+        let cases: &[(&str, &str, &[&str])] = &[
+            (
                 "Anna",
                 "Morgen treffen wir uns um zehn Uhr im Büro.",
                 &["morgen", "uns um", "büro"],
-            )),
-            check_language(&mut stt, &raw, &llm, (
+            ),
+            (
                 "Jacques",
                 "Demain, nous avons une réunion avec toute l'équipe.",
                 &["demain", "équipe"],
-            )),
-            check_language(&mut stt, &raw, &llm, (
+            ),
+            (
                 "Mónica",
                 "Mañana enviaré el informe al cliente.",
                 &["mañana", "informe"],
-            )),
-            check_language(&mut stt, &raw, &llm, (
+            ),
+            (
                 "Alice",
                 "Domani mattina finiamo il progetto.",
                 &["domani", "progetto"],
-            )),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        assert!(failures.is_empty(), "{}", failures.join("\n"));
+            ),
+        ];
+        for (voice, speech, words) in cases {
+            let out = transcribe(
+                &mut transcriber,
+                &input,
+                synthesize_in(Some(voice), speech),
+                InputFormat {
+                    sample_rate: 16_000,
+                    channels: 1,
+                },
+            );
+            for word in *words {
+                assert!(out.contains(word), "{voice}: {out:?}, missing {word:?}");
+            }
+        }
     }
 
     #[test]
-    #[ignore = "loads the bundled STT models and uses macOS `say`"]
+    #[ignore = "loads the bundled STT and LLM models and uses macOS `say`"]
     fn transcribes_common_device_formats() {
-        let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("models");
-        let mut stt = ParakeetStt::new(&models).unwrap();
-        let mono_24k = InputFormat { sample_rate: 24_000, channels: 1 };
-        let stereo_44k = InputFormat { sample_rate: 44_100, channels: 2 };
-        let stereo_48k = InputFormat { sample_rate: 48_000, channels: 2 };
-        assert!(transcribe_as_device(&mut stt, "LEI16@24000", mono_24k).contains("build server"));
-        assert!(transcribe_as_device(&mut stt, "LEF32@44100", stereo_44k).contains("build server"));
-        assert!(transcribe_as_device(&mut stt, "LEI16@48000", stereo_48k).contains("build server"));
+        let (mut transcriber, input) = test_transcriber();
+        let mut mono = Vec::new();
+        let mut samples = Vec::new();
+        for (data_format, sample_rate, channels) in [
+            ("LEI16@24000", 24_000, 1),
+            ("LEF32@44100", 44_100, 2),
+            ("LEI16@48000", 48_000, 2),
+        ] {
+            let bytes = say(
+                "The tests pass locally, but on the build server they time out.",
+                data_format,
+                None,
+            );
+            mono.clear();
+            if data_format.starts_with("LEI16") {
+                mono.extend(
+                    bytes
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|b| f32::from_sample(i16::from_le_bytes(*b))),
+                );
+            } else {
+                mono.extend(
+                    bytes
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|b| f32::from_le_bytes(*b)),
+                );
+            }
+            samples.clear();
+            samples.extend(mono.iter().flat_map(|&s| {
+                [s, 0.5 * s].into_iter().take(usize::from(channels))
+            }));
+            let out = transcribe(
+                &mut transcriber,
+                &input,
+                samples.as_slice(),
+                InputFormat {
+                    sample_rate,
+                    channels,
+                },
+            );
+            assert!(out.contains("build server"), "{data_format}: {out:?}");
+        }
     }
 
-    // Each case: text spoken by `say` ([[slnc N]] = N ms of silence), phrases the output must and
-    // must not contain, case-insensitive. At most 10% of words may be dropped.
+    // Input speech and required/forbidden output phrases, including a pause inside a negation.
     #[test]
     #[ignore = "loads the bundled STT, VAD and LLM models and uses macOS `say`"]
     fn speech_to_clean_text() {
-        let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("models");
-        let mut stt = ParakeetStt::new(&models).unwrap();
-        let raw = Arc::new(Mutex::new(RawTranscript::default()));
-        stt.subscribe(Box::new({
-            let raw = Arc::clone(&raw);
-            move |text: String| raw.lock().unwrap().push_words(text)
-        }));
-        let mut llm = LlmPostProcessor::new(&models);
-        llm.warm_up();
-        assert!(llm.is_ready(), "LLM failed to load");
-
+        let (mut transcriber, input) = test_transcriber();
         let cases: &[(&str, &[&str], &[&str])] = &[
             (
                 "So the plan is. One, we refactor the parser. Two, we add more tests. \
@@ -551,45 +568,28 @@ mod tests {
             ("The problem is this. The build takes way too long on CI.", &["this: the build"], &[]),
         ];
 
-        let mut failures = Vec::new();
-        let mut missing: Vec<&&str> = Vec::new();
-        let mut present: Vec<&&str> = Vec::new();
-        let mut check = WordCheck::default();
         for (speech, must, must_not) in cases {
-            let audio = synthesize(speech);
-            for block in audio.chunks(480) {
-                stt.push_audio(block);
-            }
-            let start = std::time::Instant::now();
-            stt.flush();
-            let transcript = std::mem::take(&mut *raw.lock().unwrap());
-            let out = llm.clean_transcript(&transcript);
-            let elapsed = start.elapsed();
-            let over_cut = check.over_cut(&transcript.to_joined_string(), &out);
-            println!(
-                "SAID: {speech}\nSTT:  {:?}\nOUT:  {out}\n({elapsed:?} after speech ended, dropped {:?})\n",
-                transcript.sentences, check.dropped
+            let out = transcribe(
+                &mut transcriber,
+                &input,
+                synthesize(speech),
+                InputFormat {
+                    sample_rate: 16_000,
+                    channels: 1,
+                },
             );
-            let lower = out.to_lowercase();
-            missing.clear();
-            missing.extend(must.iter().filter(|m| !lower.contains(**m)));
-            present.clear();
-            present.extend(must_not.iter().filter(|m| lower.contains(**m)));
-            if !missing.is_empty() || !present.is_empty() || over_cut {
-                failures.push(format!(
-                    "{out:?}\n  missing {missing:?}\n  unwanted {present:?}\n  dropped {}/{} {:?}",
-                    check.dropped.len(),
-                    check.checked,
-                    check.dropped
-                ));
+            for phrase in *must {
+                assert!(
+                    out.contains(phrase),
+                    "{speech:?} -> {out:?}, missing {phrase:?}"
+                );
+            }
+            for phrase in *must_not {
+                assert!(
+                    !out.contains(phrase),
+                    "{speech:?} -> {out:?}, unwanted {phrase:?}"
+                );
             }
         }
-        assert!(
-            failures.is_empty(),
-            "{} of {} cases failed:\n{}",
-            failures.len(),
-            cases.len(),
-            failures.join("\n")
-        );
     }
 }

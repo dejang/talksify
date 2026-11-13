@@ -251,7 +251,7 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "loads the bundled STT models and uses macOS `say`"]
     fn chunks_follow_pauses() {
-        let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("models");
+        let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
         let mut stt = ParakeetStt::new(&models).unwrap();
         let chunks = Arc::new(Mutex::new(Vec::new()));
         stt.subscribe(Box::new({

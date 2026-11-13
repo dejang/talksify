@@ -1,0 +1,24 @@
+[package]
+name = "talksify-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+log = "0.4"
+thiserror = "2"
+rubato = "0.16"
+cpal = "0.15"
+rtrb = "0.3"
+hound = "3"
+sherpa-onnx = "2.0"
+tokio = { version = "1", features = ["rt-multi-thread"] }
+# parakeet_stt.rs and llm_postprocessor.rs use these on every platform. CPU inference is the
+# default; the macOS block below layers the `metal` feature on top.
+mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs", branch = "master" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs", branch = "master", features = ["metal"] }

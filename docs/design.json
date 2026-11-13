@@ -2,7 +2,7 @@
   "format": "floorplan.design/1",
   "id": "local-whisperflow",
   "title": "Talksify",
-  "revision": 227,
+  "revision": 228,
   "parts": [
     {
       "id": "hotkey",
@@ -117,7 +117,7 @@
       "kind": "module",
       "name": "Transcriber",
       "confirmed": true,
-      "responsibility": "Runs one recording end to end. Its audio-consumer thread pulls the device's samples from AudioDevice's ring buffer, runs AudioProcessor (mono, 16 kHz), reports the audio level, and writes the audio into a per-recording ring buffer for the STT thread. On stop it joins that thread, flushes STT and runs the LLM on the raw transcript. When given a path, an audio-writer thread saves the mic's samples to that WAV file.",
+      "responsibility": "Runs one recording end to end. Its audio-consumer thread pulls the device's samples from AudioDevice's ring buffer, runs AudioProcessor (mono, 16 kHz), reports the audio level, and writes the audio into a per-recording ring buffer for the STT thread. On stop it joins that thread, flushes STT and runs the LLM on the raw transcript. When given a path, an audio-writer thread saves the mic's samples to that WAV file. Generic over AudioSource; builds the source on the audio-consumer thread at each start.",
       "operations": [
         {
           "id": "op-1",
@@ -149,7 +149,7 @@
         {
           "id": "op-4",
           "kind": "command",
-          "signature": "fn new(config: &Config, on_level: Arc<dyn Fn(f32) + Send + Sync>) -> Result<Self, TranscriberError>",
+          "signature": "fn new(model_dir: &Path, make_source: impl Fn() -> A + Send + Sync + 'static, on_level: Arc<dyn Fn(f32) + Send + Sync>) -> Result<Self, TranscriberError>",
           "confirmed": true,
           "name": "new"
         },
@@ -161,6 +161,13 @@
           "post": [
             "level is the mic loudness in 0..=1, about 20 times a second while recording"
           ],
+          "confirmed": true
+        },
+        {
+          "id": "with-default",
+          "name": "with_default",
+          "kind": "command",
+          "signature": "fn with_default(model_dir: &Path, audio_device: Option<String>, on_level: Arc<dyn Fn(f32) + Send + Sync>) -> Result<Self, TranscriberError>",
           "confirmed": true
         }
       ],
@@ -242,7 +249,12 @@
           },
           "confirmed": true
         }
-      ]
+      ],
+      "code": {
+        "path": "src-tauri/core/src/transcriber.rs",
+        "symbol": "Transcriber",
+        "language": "rust"
+      }
     },
     {
       "id": "module-2",
@@ -295,7 +307,12 @@
           },
           "confirmed": true
         }
-      ]
+      ],
+      "code": {
+        "path": "src-tauri/core/src/audio_device.rs",
+        "symbol": "AudioDevice",
+        "language": "rust"
+      }
     },
     {
       "id": "module-3",
@@ -335,7 +352,12 @@
         }
       ],
       "transitions": [],
-      "failures": []
+      "failures": [],
+      "code": {
+        "path": "src-tauri/core/src/parakeet_stt.rs",
+        "symbol": "ParakeetStt",
+        "language": "rust"
+      }
     },
     {
       "id": "contract-1",
@@ -371,7 +393,12 @@
       ],
       "state": [],
       "transitions": [],
-      "failures": []
+      "failures": [],
+      "code": {
+        "path": "src-tauri/core/src/stt.rs",
+        "symbol": "Stt",
+        "language": "rust"
+      }
     },
     {
       "id": "module-4",
@@ -397,7 +424,12 @@
         }
       ],
       "transitions": [],
-      "failures": []
+      "failures": [],
+      "code": {
+        "path": "src-tauri/core/src/raw_transcript.rs",
+        "symbol": "RawTranscript",
+        "language": "rust"
+      }
     },
     {
       "id": "module-5",
@@ -416,7 +448,12 @@
       ],
       "state": [],
       "transitions": [],
-      "failures": []
+      "failures": [],
+      "code": {
+        "path": "src-tauri/core/src/llm_postprocessor.rs",
+        "symbol": "LlmPostProcessor",
+        "language": "rust"
+      }
     },
     {
       "id": "module-6",
@@ -435,7 +472,7 @@
       "name": "AudioProcessor",
       "confirmed": true,
       "code": {
-        "path": "src-tauri/src/audio_device.rs",
+        "path": "src-tauri/core/src/audio_device.rs",
         "symbol": "AudioProcessor",
         "language": "rust"
       },
@@ -486,6 +523,118 @@
       ],
       "transitions": [],
       "failures": []
+    },
+    {
+      "id": "audio-source",
+      "kind": "contract",
+      "name": "AudioSource",
+      "confirmed": true,
+      "responsibility": "Delivers interleaved f32 samples in -1..=1, in the source's native format, through a ring buffer. Created on Transcriber's audio-consumer thread at each start.",
+      "operations": [
+        {
+          "id": "op-1",
+          "name": "start_capture",
+          "kind": "command",
+          "signature": "fn start_capture(&mut self) -> Result<HeapCons<f32>, AudioError>",
+          "confirmed": true
+        },
+        {
+          "id": "op-2",
+          "name": "stop_capture",
+          "kind": "command",
+          "signature": "fn stop_capture(&mut self) -> Result<(), AudioError>",
+          "confirmed": true
+        },
+        {
+          "id": "op-3",
+          "name": "input_format",
+          "kind": "query",
+          "signature": "fn input_format(&self) -> Option<InputFormat>",
+          "confirmed": true
+        }
+      ],
+      "state": [],
+      "transitions": [],
+      "failures": [],
+      "code": {
+        "path": "src-tauri/core/src/audio_source.rs",
+        "symbol": "AudioSource",
+        "language": "rust"
+      }
+    },
+    {
+      "id": "file-source",
+      "kind": "module",
+      "name": "FileSource",
+      "confirmed": true,
+      "responsibility": "Plays a WAV file into its ring buffer at real-time speed, one 10 ms block at a time, from its own thread.",
+      "operations": [
+        {
+          "id": "op-1",
+          "name": "start_capture",
+          "kind": "command",
+          "signature": "fn start_capture(&mut self) -> Result<HeapCons<f32>, AudioError>",
+          "confirmed": true
+        },
+        {
+          "id": "op-2",
+          "name": "stop_capture",
+          "kind": "command",
+          "signature": "fn stop_capture(&mut self) -> Result<(), AudioError>",
+          "confirmed": true
+        },
+        {
+          "id": "op-3",
+          "name": "input_format",
+          "kind": "query",
+          "signature": "fn input_format(&self) -> Option<InputFormat>",
+          "confirmed": true
+        }
+      ],
+      "state": [
+        {
+          "id": "finished",
+          "name": "Playback finished",
+          "type": "Arc<AtomicBool>",
+          "durability": "memory",
+          "confirmed": true
+        }
+      ],
+      "transitions": [],
+      "failures": [
+        {
+          "id": "spawn",
+          "trigger": "error",
+          "what": "The playback thread cannot start",
+          "detectedBy": "start_capture",
+          "recovery": {
+            "strategy": "fail",
+            "detail": "Return AudioError::StreamError"
+          },
+          "confirmed": true
+        }
+      ],
+      "code": {
+        "path": "src-tauri/cli/src/file_source.rs",
+        "symbol": "FileSource",
+        "language": "rust"
+      }
+    },
+    {
+      "id": "cli",
+      "kind": "module",
+      "name": "talksify-cli",
+      "confirmed": true,
+      "responsibility": "Transcribes a WAV file from the command line and prints the cleaned transcript.",
+      "operations": [],
+      "state": [],
+      "transitions": [],
+      "failures": [],
+      "code": {
+        "path": "src-tauri/cli/src/main.rs",
+        "symbol": "main",
+        "language": "rust"
+      }
     }
   ],
   "boundaries": [
@@ -505,7 +654,7 @@
     {
       "id": "boundary-1",
       "kind": "code",
-      "name": "Transcriber",
+      "name": "talksify-core",
       "contains": [
         "module-1",
         "module-2",
@@ -513,8 +662,18 @@
         "module-3",
         "module-4",
         "module-5",
-        "module-6",
-        "audio-processor"
+        "audio-processor",
+        "audio-source"
+      ],
+      "confirmed": true
+    },
+    {
+      "id": "talksify-cli",
+      "kind": "process",
+      "name": "talksify-cli",
+      "contains": [
+        "cli",
+        "file-source"
       ],
       "confirmed": true
     }
@@ -523,11 +682,11 @@
     {
       "id": "connection-2",
       "from": "module-1",
-      "to": "module-2",
+      "to": "audio-source",
       "kind": "call",
       "operations": [
-        "module-2.op-1",
-        "module-2.op-2"
+        "audio-source.op-1",
+        "audio-source.op-2"
       ],
       "failures": [],
       "confirmed": true
@@ -627,6 +786,46 @@
       ],
       "failures": [],
       "confirmed": true
+    },
+    {
+      "id": "audio-source-device",
+      "from": "audio-source",
+      "to": "module-2",
+      "kind": "call",
+      "operations": [
+        "module-2.op-1",
+        "module-2.op-2",
+        "module-2.op-3"
+      ],
+      "failures": [],
+      "confirmed": true
+    },
+    {
+      "id": "audio-source-file",
+      "from": "audio-source",
+      "to": "file-source",
+      "kind": "call",
+      "operations": [
+        "file-source.op-1",
+        "file-source.op-2",
+        "file-source.op-3"
+      ],
+      "failures": [],
+      "confirmed": true
+    },
+    {
+      "id": "cli-transcriber",
+      "from": "cli",
+      "to": "module-1",
+      "kind": "call",
+      "operations": [
+        "module-1.op-1",
+        "module-1.op-2",
+        "module-1.op-3",
+        "module-1.op-4"
+      ],
+      "failures": [],
+      "confirmed": true
     }
   ],
   "tests": [
@@ -671,7 +870,7 @@
         {
           "id": "s3",
           "via": "connection-2",
-          "operation": "module-2.op-1",
+          "operation": "audio-source.op-1",
           "does": "The audio-consumer thread opens the mic; the callback only scales 48 kHz mono samples into AudioDevice's ring buffer",
           "returns": "HeapCons<f32>"
         },
@@ -760,7 +959,7 @@
       "covers": [
         "module-1.op-1",
         "module-1.op-2",
-        "module-2.op-1",
+        "audio-source.op-1",
         "audio-processor.process",
         "audio-processor.finish",
         "contract-1.op-1",
@@ -776,7 +975,7 @@
       "id": "q1",
       "number": 1,
       "askedBy": "assistant",
-      "text": "What does WhisperFlow do? (a few sentences — what the user does, what happens, what comes out)",
+      "text": "What does WhisperFlow do? (a few sentences \u2014 what the user does, what happens, what comes out)",
       "why": "I need the core flow to know what we're replicating locally.",
       "options": [
         "I'll describe it",
@@ -792,7 +991,7 @@
       "id": "q2",
       "number": 2,
       "askedBy": "assistant",
-      "text": "When you say \"running all locally\" — what does that mean to you?",
+      "text": "When you say \"running all locally\" \u2014 what does that mean to you?",
       "why": "It could mean no cloud API calls, self-hosted on your own server, or fully offline on one machine.",
       "options": [
         "No cloud APIs (local models)",
@@ -847,7 +1046,7 @@
         "Small model (qwen2.5:1.5b or similar)",
         "Medium model (llama3.1:8b)",
         "Skip LLM cleanup (just STT output)",
-        "Configurable — user picks"
+        "Configurable \u2014 user picks"
       ],
       "status": "withdrawn",
       "answer": {
@@ -1038,7 +1237,7 @@
       "about": "inject",
       "askedBy": "assistant",
       "text": "If text injection fails (e.g. accessibility permission denied), what should happen?",
-      "why": "The user spoke something — losing it is the worst outcome.",
+      "why": "The user spoke something \u2014 losing it is the worst outcome.",
       "options": [
         "Copy to clipboard + notify user to paste manually",
         "Show text in overlay for manual copy",
@@ -1053,7 +1252,7 @@
       "about": "module-1",
       "askedBy": "assistant",
       "text": "What goes in this module?",
-      "why": "I see you added it — want me to help fill it in, or are you sketching something?",
+      "why": "I see you added it \u2014 want me to help fill it in, or are you sketching something?",
       "status": "parked"
     },
     {
@@ -1076,14 +1275,14 @@
       "about": "module-1",
       "askedBy": "assistant",
       "text": "Should I remove the `stt` part and route through Transcriber, or does Transcriber call `stt` internally (stt stays as a separate part)?",
-      "why": "Right now both exist — Transcriber and stt. One should own the STT logic.",
+      "why": "Right now both exist \u2014 Transcriber and stt. One should own the STT logic.",
       "options": [
-        "Remove stt — Transcriber owns it internally",
-        "Keep stt — Transcriber calls it (stt is the sherpa-onnx wrapper)"
+        "Remove stt \u2014 Transcriber owns it internally",
+        "Keep stt \u2014 Transcriber calls it (stt is the sherpa-onnx wrapper)"
       ],
       "status": "answered",
       "answer": {
-        "text": "Remove stt — Transcriber owns it internally",
+        "text": "Remove stt \u2014 Transcriber owns it internally",
         "by": "user"
       }
     },
@@ -1830,8 +2029,8 @@
         "y": 246
       },
       "module-2": {
-        "x": 712,
-        "y": 206
+        "x": 1050,
+        "y": 235
       },
       "hotkey": {
         "x": 273,
@@ -1868,6 +2067,18 @@
       "audio-processor": {
         "x": 402,
         "y": 695
+      },
+      "audio-source": {
+        "x": 714,
+        "y": 235
+      },
+      "cli": {
+        "x": 1650,
+        "y": 250
+      },
+      "file-source": {
+        "x": 1650,
+        "y": 550
       }
     },
     "boundaries": {
@@ -1882,6 +2093,12 @@
         "y": -179,
         "w": 1564,
         "h": 262
+      },
+      "talksify-cli": {
+        "x": 1560,
+        "y": 193,
+        "w": 480,
+        "h": 650
       }
     }
   }
