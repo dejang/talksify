@@ -1,6 +1,6 @@
 # Implementation Plan — Talksify
 
-**Truth model:** `docs/design.json` (understudy board, rev 228).
+**Truth model:** `docs/design.json` (understudy board, rev 229).
 Every task below references part IDs from that file. When in doubt, the board wins.
 
 ## Decisions (locked)
