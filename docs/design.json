@@ -2,7 +2,7 @@
   "format": "floorplan.design/1",
   "id": "local-whisperflow",
   "title": "Talksify",
-  "revision": 229,
+  "revision": 230,
   "parts": [
     {
       "id": "hotkey",
@@ -137,7 +137,10 @@
             "TranscriberError::Stop"
           ],
           "confirmed": true,
-          "name": "stop_transcribing"
+          "name": "stop_transcribing",
+          "post": [
+            "returns the raw STT text and the cleaned text"
+          ]
         },
         {
           "id": "op-3",
@@ -625,7 +628,7 @@
       "kind": "module",
       "name": "talksify-cli",
       "confirmed": true,
-      "responsibility": "Transcribes a WAV file from the command line and prints the cleaned transcript. Given a folder, checks each WAV's cleaned transcript against the .txt with the same name and reports the error rate over words, punctuation and line breaks.",
+      "responsibility": "Transcribes a WAV file from the command line and prints the cleaned transcript. Given a folder, checks each WAV's cleaned transcript against the .txt with the same name and reports the error rate over words, punctuation and line breaks. Scores the raw STT text as well as the cleaned text, splits errors into case, punctuation, line breaks and words, and times the wait after stop.",
       "operations": [],
       "state": [],
       "transitions": [],

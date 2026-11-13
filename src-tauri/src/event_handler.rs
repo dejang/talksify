@@ -99,7 +99,10 @@ pub(crate) fn stop_dictation(app: &AppHandle, state: &AppState) -> Result<(), St
             .transcriber
             .lock()
             .map_err(|e| format!("lock poisoned: {e}"))?;
-        transcriber.stop_transcribing().map_err(|e| e.to_string())?
+        transcriber
+            .stop_transcribing()
+            .map_err(|e| e.to_string())?
+            .cleaned
     };
     if transcript.is_empty() {
         log::info!("[event] empty transcript, skipping inject");
