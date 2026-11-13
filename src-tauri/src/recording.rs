@@ -1,7 +1,39 @@
 use std::path::{Path, PathBuf};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
-use crate::audio_device::{HeapCons, InputFormat};
+use crate::audio_device::{HeapCons, HeapProd, InputFormat};
+use crate::transcriber::send_audio;
+
+pub(crate) struct Recorder {
+    tx: HeapProd<f32>,
+    writer: JoinHandle<()>,
+    dropped: usize,
+}
+
+impl Recorder {
+    pub(crate) fn new(tx: HeapProd<f32>, writer: JoinHandle<()>) -> Self {
+        Self {
+            tx,
+            writer,
+            dropped: 0,
+        }
+    }
+
+    /// Pushes what fits into the writer's ring buffer and counts the rest.
+    pub(crate) fn push(&mut self, samples: &[f32]) {
+        self.dropped += send_audio(&mut self.tx, samples);
+    }
+
+    /// Drops the write end, joins the writer, and logs dropped samples, if any.
+    pub(crate) fn finish(self) {
+        drop(self.tx);
+        let _ = self.writer.join();
+        if self.dropped > 0 {
+            log::warn!("[recording] dropped {} samples", self.dropped);
+        }
+    }
+}
 
 /// Writes everything from `audio` to a 32-bit float WAV at `path`, until the
 /// producer is dropped.

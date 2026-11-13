@@ -11,6 +11,7 @@ use crate::llm_postprocessor::LlmPostProcessor;
 use crate::parakeet_stt::ParakeetStt;
 use crate::raw_transcript::RawTranscript;
 use crate::recording;
+use crate::recording::Recorder;
 use crate::stt::Stt;
 
 #[derive(Debug, thiserror::Error)]
@@ -97,7 +98,10 @@ impl Transcriber {
         })
     }
 
-    pub(crate) fn start_transcribing(&mut self, save_audio_to: Option<PathBuf>) -> Result<(), TranscriberError> {
+    pub(crate) fn start_transcribing(
+        &mut self,
+        save_audio_to: Option<PathBuf>,
+    ) -> Result<(), TranscriberError> {
         if self.is_recording.load(Ordering::Relaxed) {
             return Err(TranscriberError::AlreadyRunning);
         }
@@ -156,8 +160,8 @@ impl Transcriber {
                                 }
                             }
                             total_samples += count as u64;
-                            if let Some((tx, _, rec_dropped)) = &mut rec {
-                                *rec_dropped += send_audio(tx, &buf[..count]);
+                            if let Some(rec) = &mut rec {
+                                rec.push(&buf[..count]);
                             }
                             let audio = processor.process(&buf[..count]);
                             if let Some(level) = meter.push(audio) {
@@ -184,15 +188,15 @@ impl Transcriber {
                     remaining.push(sample);
                 }
                 log::info!("[audio] draining {} remaining samples", remaining.len());
-                if let Some((tx, _, rec_dropped)) = &mut rec {
-                    *rec_dropped += send_audio(tx, &remaining);
+                if let Some(rec) = &mut rec {
+                    rec.push(&remaining);
                 }
                 for block in remaining.chunks(buf.len()) {
                     dropped += send_audio(&mut audio_tx, processor.process(block));
                 }
                 dropped += send_audio(&mut audio_tx, processor.finish());
-                if let Some((tx, writer, n)) = rec {
-                    finish_writer(tx, writer, n);
+                if let Some(rec) = rec {
+                    rec.finish();
                 }
                 if dropped > 0 {
                     log::warn!("[audio] STT fell behind, dropped {dropped} samples");
@@ -263,8 +267,8 @@ impl Drop for Transcriber {
     }
 }
 
-/// Pushes `audio` into the STT thread's ring buffer; returns how many samples did not fit.
-fn send_audio(audio_tx: &mut HeapProd<f32>, audio: &[f32]) -> usize {
+/// Pushes `audio` into a ring buffer; returns how many samples did not fit.
+pub(crate) fn send_audio(audio_tx: &mut HeapProd<f32>, audio: &[f32]) -> usize {
     let fits = audio_tx.slots().min(audio.len());
     if let Ok(chunk) = audio_tx.write_chunk_uninit(fits) {
         chunk.fill_from_iter(audio.iter().copied());
@@ -272,7 +276,7 @@ fn send_audio(audio_tx: &mut HeapProd<f32>, audio: &[f32]) -> usize {
     audio.len() - fits
 }
 
-fn spawn_writer(path: PathBuf, fmt: InputFormat) -> Option<(HeapProd<f32>, JoinHandle<()>, usize)> {
+fn spawn_writer(path: PathBuf, fmt: InputFormat) -> Option<Recorder> {
     let cap = fmt.sample_rate as usize * usize::from(fmt.channels) * 10;
     let (tx, rx) = rtrb::RingBuffer::new(cap);
     Builder::new()
@@ -280,15 +284,7 @@ fn spawn_writer(path: PathBuf, fmt: InputFormat) -> Option<(HeapProd<f32>, JoinH
         .spawn(move || recording::write_wav(path, fmt, rx))
         .inspect_err(|e| log::error!("[recording] writer thread: {e}"))
         .ok()
-        .map(|writer| (tx, writer, 0))
-}
-
-fn finish_writer(tx: HeapProd<f32>, writer: JoinHandle<()>, n: usize) {
-    drop(tx);
-    let _ = writer.join();
-    if n > 0 {
-        log::warn!("[recording] dropped {n} samples");
-    }
+        .map(|writer| Recorder::new(tx, writer))
 }
 
 fn stt_warm_loop(
