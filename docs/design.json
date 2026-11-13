@@ -2,7 +2,7 @@
   "format": "floorplan.design/1",
   "id": "local-whisperflow",
   "title": "Talksify",
-  "revision": 226,
+  "revision": 227,
   "parts": [
     {
       "id": "hotkey",
@@ -117,12 +117,12 @@
       "kind": "module",
       "name": "Transcriber",
       "confirmed": true,
-      "responsibility": "Runs one recording end to end. Its audio-consumer thread pulls the device's samples from AudioDevice's ring buffer, runs AudioProcessor (mono, 16 kHz), reports the audio level, and writes the audio into a per-recording ring buffer for the STT thread. On stop it joins that thread, flushes STT and runs the LLM on the raw transcript.",
+      "responsibility": "Runs one recording end to end. Its audio-consumer thread pulls the device's samples from AudioDevice's ring buffer, runs AudioProcessor (mono, 16 kHz), reports the audio level, and writes the audio into a per-recording ring buffer for the STT thread. On stop it joins that thread, flushes STT and runs the LLM on the raw transcript. When given a path, an audio-writer thread saves the mic's samples to that WAV file.",
       "operations": [
         {
           "id": "op-1",
           "kind": "command",
-          "signature": "fn start_transcribing(&mut self) -> Result<(), TranscriberError>",
+          "signature": "fn start_transcribing(&mut self, save_audio_to: Option<PathBuf>) -> Result<(), TranscriberError>",
           "errors": [
             "TranscriberError::Init"
           ],
@@ -228,6 +228,17 @@
           "recovery": {
             "strategy": "accept",
             "detail": "Drop those samples and log how many when the recording stops"
+          },
+          "confirmed": true
+        },
+        {
+          "id": "recording-io",
+          "trigger": "error",
+          "what": "Creating or writing the recording WAV file fails",
+          "detectedBy": "audio-writer thread",
+          "recovery": {
+            "strategy": "accept",
+            "detail": "Log the error and stop writing; the dictation carries on."
           },
           "confirmed": true
         }

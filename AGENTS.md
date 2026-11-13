@@ -38,6 +38,7 @@ src-tauri/src/          Rust backend
   lib.rs                App entry, plugin wiring
   event_handler.rs      Hotkey → Transcriber → Inject glue
   transcriber.rs        Orchestrator (board: module-1)
+  recording.rs          WAV writer for saved recordings (board: module-1)
   audio_device.rs       cpal capture (board: module-2)
   stt.rs                STT trait (board: contract-1)
   parakeet_stt.rs       Parakeet via sherpa-onnx (board: module-3)

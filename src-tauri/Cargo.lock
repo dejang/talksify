@@ -7290,10 +7290,12 @@ dependencies = [
 name = "talksify"
 version = "0.2.2"
 dependencies = [
+ "chrono",
  "core-foundation 0.10.1",
  "core-graphics",
  "cpal",
  "dirs 6.0.0",
+ "hound",
  "log",
  "mistralrs",
  "objc2",
