@@ -4,7 +4,7 @@ Local voice dictation: speech is transcribed and cleaned up on your machine, nev
 
 ## Truth Model
 
-**`docs/design.json`** is the architecture board (understudy format, rev 228).
+**`docs/design.json`** is the architecture board (understudy format, rev 229).
 It is the single source of truth for:
 - Part responsibilities, operations, state, and failures
 - Connections between parts
@@ -30,6 +30,7 @@ pnpm lint               # oxlint + ast-grep
 cd src-tauri
 cargo clippy --workspace --all-targets
 cargo run -p talksify-cli -- <file.wav>
+cargo run -p talksify-cli -- <folder>
 ```
 
 ## Layout
@@ -56,6 +57,8 @@ src-tauri/core/src/     Tauri-free transcription pipeline
 src-tauri/cli/src/      WAV transcription CLI
   main.rs               Argument parsing and pipeline lifecycle (board: cli)
   file_source.rs        Real-time WAV source (board: file-source)
+  harness.rs            Folder transcript comparison (board: cli)
+  score.rs              Tokenization and token-level edit distance (board: cli)
 src-tauri/models/       Bundled ML models
 docs/design.json        Architecture board (truth model)
 docs/PLAN.md            Implementation plan

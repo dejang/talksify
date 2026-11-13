@@ -1,4 +1,6 @@
 mod file_source;
+mod harness;
+mod score;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -43,6 +45,13 @@ fn run(file: &Path, models: &Path) -> Result<String, String> {
         Arc::new(|_| {}),
     )
     .map_err(|e| e.to_string())?;
+    transcribe(&mut transcriber, &finished)
+}
+
+fn transcribe(
+    transcriber: &mut Transcriber<FileSource>,
+    finished: &AtomicBool,
+) -> Result<String, String> {
     transcriber
         .start_transcribing(None)
         .map_err(|e| e.to_string())?;
@@ -56,13 +65,19 @@ fn run(file: &Path, models: &Path) -> Result<String, String> {
 }
 
 fn main() -> ExitCode {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
-        .target(env_logger::Target::Stderr)
-        .init();
+    // Show harness reports without enabling verbose model/pipeline logs.
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("warn,talksify_cli::harness=info"),
+    )
+    .target(env_logger::Target::Stderr)
+    .init();
     let Some((file, models)) = arguments() else {
-        eprintln!("talksify-cli <file.wav> [--models <dir>]");
+        eprintln!("talksify-cli <file.wav | folder> [--models <dir>]");
         return ExitCode::FAILURE;
     };
+    if file.is_dir() {
+        return harness::run(&file, &models);
+    }
     match run(&file, &models) {
         Ok(transcript) => {
             println!("{transcript}");

@@ -2,7 +2,7 @@
   "format": "floorplan.design/1",
   "id": "local-whisperflow",
   "title": "Talksify",
-  "revision": 228,
+  "revision": 229,
   "parts": [
     {
       "id": "hotkey",
@@ -625,7 +625,7 @@
       "kind": "module",
       "name": "talksify-cli",
       "confirmed": true,
-      "responsibility": "Transcribes a WAV file from the command line and prints the cleaned transcript.",
+      "responsibility": "Transcribes a WAV file from the command line and prints the cleaned transcript. Given a folder, checks each WAV's cleaned transcript against the .txt with the same name and reports the error rate over words, punctuation and line breaks.",
       "operations": [],
       "state": [],
       "transitions": [],
