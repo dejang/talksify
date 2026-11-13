@@ -1,4 +1,6 @@
+use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
@@ -20,6 +22,7 @@ pub(crate) struct AppState {
     pub(crate) state: Mutex<DictationState>,
     /// Gap in logical pixels between the overlay and the bottom of the usable screen area.
     pub(crate) overlay_margin: f64,
+    pub(crate) save_recordings: AtomicBool,
 }
 
 fn set_state(app: &AppHandle, state: &AppState, new: DictationState) {
@@ -62,13 +65,27 @@ fn place_at_bottom(window: &WebviewWindow, margin: f64) -> tauri::Result<()> {
     window.set_position(PhysicalPosition::new(x, y))
 }
 
+fn recording_path() -> Option<PathBuf> {
+    let Some(base) = dirs::data_local_dir() else {
+        log::error!("[recording] data_local_dir unavailable");
+        return None;
+    };
+    let name = format!("{}.wav", chrono::Local::now().format("%Y-%m-%d_%H-%M-%S"));
+    Some(base.join("talksify").join("recordings").join(name))
+}
+
 pub(crate) fn start_dictation(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    let save_audio_to = state
+        .save_recordings
+        .load(Ordering::Relaxed)
+        .then(recording_path)
+        .flatten();
     let mut transcriber = state
         .transcriber
         .lock()
         .map_err(|e| format!("lock poisoned: {e}"))?;
     transcriber
-        .start_transcribing()
+        .start_transcribing(save_audio_to)
         .map_err(|e| e.to_string())?;
     drop(transcriber);
     set_state(app, state, DictationState::Recording);

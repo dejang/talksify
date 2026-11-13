@@ -1,14 +1,16 @@
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::Builder;
 use std::thread::JoinHandle;
 
-use crate::audio_device::{AudioDevice, AudioProcessor, HeapCons, HeapProd, LevelMeter};
+use crate::audio_device::{AudioDevice, AudioProcessor, HeapCons, HeapProd, InputFormat, LevelMeter};
 use crate::config::Config;
 use crate::llm_postprocessor::LlmPostProcessor;
 use crate::parakeet_stt::ParakeetStt;
 use crate::raw_transcript::RawTranscript;
+use crate::recording;
 use crate::stt::Stt;
 
 #[derive(Debug, thiserror::Error)]
@@ -95,7 +97,7 @@ impl Transcriber {
         })
     }
 
-    pub(crate) fn start_transcribing(&mut self) -> Result<(), TranscriberError> {
+    pub(crate) fn start_transcribing(&mut self, save_audio_to: Option<PathBuf>) -> Result<(), TranscriberError> {
         if self.is_recording.load(Ordering::Relaxed) {
             return Err(TranscriberError::AlreadyRunning);
         }
@@ -125,14 +127,15 @@ impl Transcriber {
                 };
                 let mut buf = vec![0f32; 480];
                 let format = device.input_format();
-                let Some(mut processor) =
-                    format.and_then(|f| AudioProcessor::new(f, stt_rate, buf.len()))
+                let Some((format, mut processor)) =
+                    format.and_then(|f| Some((f, AudioProcessor::new(f, stt_rate, buf.len())?)))
                 else {
                     log::error!("cannot process {format:?} into {stt_rate} Hz mono");
                     is_recording.store(false, Ordering::Relaxed);
                     let _ = device.stop_capture();
                     return;
                 };
+                let mut rec = save_audio_to.and_then(|path| spawn_writer(path, format));
 
                 let mut total_samples: u64 = 0;
                 let mut dropped = 0;
@@ -153,6 +156,9 @@ impl Transcriber {
                                 }
                             }
                             total_samples += count as u64;
+                            if let Some((tx, _, rec_dropped)) = &mut rec {
+                                *rec_dropped += send_audio(tx, &buf[..count]);
+                            }
                             let audio = processor.process(&buf[..count]);
                             if let Some(level) = meter.push(audio) {
                                 on_level(level);
@@ -178,10 +184,16 @@ impl Transcriber {
                     remaining.push(sample);
                 }
                 log::info!("[audio] draining {} remaining samples", remaining.len());
+                if let Some((tx, _, rec_dropped)) = &mut rec {
+                    *rec_dropped += send_audio(tx, &remaining);
+                }
                 for block in remaining.chunks(buf.len()) {
                     dropped += send_audio(&mut audio_tx, processor.process(block));
                 }
                 dropped += send_audio(&mut audio_tx, processor.finish());
+                if let Some((tx, writer, n)) = rec {
+                    finish_writer(tx, writer, n);
+                }
                 if dropped > 0 {
                     log::warn!("[audio] STT fell behind, dropped {dropped} samples");
                 }
@@ -258,6 +270,25 @@ fn send_audio(audio_tx: &mut HeapProd<f32>, audio: &[f32]) -> usize {
         chunk.fill_from_iter(audio.iter().copied());
     }
     audio.len() - fits
+}
+
+fn spawn_writer(path: PathBuf, fmt: InputFormat) -> Option<(HeapProd<f32>, JoinHandle<()>, usize)> {
+    let cap = fmt.sample_rate as usize * usize::from(fmt.channels) * 10;
+    let (tx, rx) = rtrb::RingBuffer::new(cap);
+    Builder::new()
+        .name("audio-writer".into())
+        .spawn(move || recording::write_wav(path, fmt, rx))
+        .inspect_err(|e| log::error!("[recording] writer thread: {e}"))
+        .ok()
+        .map(|writer| (tx, writer, 0))
+}
+
+fn finish_writer(tx: HeapProd<f32>, writer: JoinHandle<()>, n: usize) {
+    drop(tx);
+    let _ = writer.join();
+    if n > 0 {
+        log::warn!("[recording] dropped {n} samples");
+    }
 }
 
 fn stt_warm_loop(

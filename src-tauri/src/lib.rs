@@ -5,11 +5,13 @@ mod inject;
 mod llm_postprocessor;
 mod parakeet_stt;
 mod raw_transcript;
+mod recording;
 mod stt;
 mod text_format;
 mod transcriber;
 mod updater;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder};
@@ -69,6 +71,9 @@ fn build_tray(app: &tauri::App, hotkey: String) -> tauri::Result<Arc<Updater>> {
     let autostart_item = CheckMenuItemBuilder::with_id("autostart", "Start at Login")
         .checked(app.autolaunch().is_enabled().unwrap_or(false))
         .build(app)?;
+    let recordings_item = CheckMenuItemBuilder::with_id("recordings", "Save Recordings")
+        .checked(false)
+        .build(app)?;
     let update_item = MenuItemBuilder::with_id("update", "Check for Updates…").build(app)?;
     let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
     let updater = Updater::new(update_item.clone());
@@ -77,6 +82,7 @@ fn build_tray(app: &tauri::App, hotkey: String) -> tauri::Result<Arc<Updater>> {
     let menu = MenuBuilder::new(app)
         .item(&dictation_item)
         .item(&autostart_item)
+        .item(&recordings_item)
         .separator()
         .item(&update_item)
         .separator()
@@ -100,6 +106,15 @@ fn build_tray(app: &tauri::App, hotkey: String) -> tauri::Result<Arc<Updater>> {
                     log::error!("[tray] toggle autostart: {e}");
                 }
                 let _ = autostart_item.set_checked(app.autolaunch().is_enabled().unwrap_or(false));
+            }
+            "recordings" => {
+                let state = app.state::<AppState>();
+                let save = !state.save_recordings.fetch_xor(true, Ordering::Relaxed);
+                let _ = recordings_item.set_checked(save);
+                log::info!(
+                    "[tray] save recordings {}",
+                    if save { "on" } else { "off" }
+                );
             }
             "update" => menu_updater.handle_menu_click(app.clone()),
             "quit" => app.exit(0),
@@ -156,6 +171,7 @@ pub fn run() {
                 injector,
                 state: Mutex::new(event_handler::DictationState::Idle),
                 overlay_margin: 24.0,
+                save_recordings: AtomicBool::new(false),
             };
             app.manage(app_state);
 

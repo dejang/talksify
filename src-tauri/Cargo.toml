@@ -28,6 +28,8 @@ toml = "0.8"
 cpal = "0.15"
 rtrb = "0.3"
 dirs = "6"
+hound = "3"
+chrono = "0.4"
 sherpa-onnx = "2.0"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 # parakeet_stt.rs and llm_postprocessor.rs use these on every platform. CPU inference is the
