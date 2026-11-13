@@ -12,4 +12,5 @@ mod transcriber;
 
 pub use audio_device::{AudioDevice, AudioError, HeapCons, InputFormat};
 pub use audio_source::AudioSource;
+pub use raw_transcript::Transcript;
 pub use transcriber::{Transcriber, TranscriberError};

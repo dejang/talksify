@@ -3,11 +3,12 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use talksify_core::{InputFormat, Transcriber};
 
 use crate::file_source::{FileSource, read_wav};
-use crate::{score, transcribe};
+use crate::{play_file, score};
 
 type WavPair = (PathBuf, PathBuf);
 
@@ -72,9 +73,11 @@ pub(crate) fn run(folder: &Path, models: &Path) -> ExitCode {
         }
     };
 
-    let mut total_errors = 0;
+    let mut raw_errors = score::Errors::default();
+    let mut cleaned_errors = score::Errors::default();
     let mut total_expected = 0;
-    let mut count = 0;
+    let mut waits = Vec::new();
+    let mut worse = Vec::new();
     let mut failed = false;
     for (wav, text) in paired {
         let name = wav.file_name().unwrap_or_default().to_string_lossy();
@@ -84,25 +87,34 @@ pub(crate) fn run(folder: &Path, models: &Path) -> ExitCode {
                 .map_err(|e| format!("cannot read {}: {e}", text.display()))?;
             *audio.lock().unwrap_or_else(PoisonError::into_inner) = data;
             finished.store(false, Ordering::Release);
-            let output = transcribe(&mut transcriber, &finished)?;
-            Ok::<_, String>((expected, output))
+            play_file(&mut transcriber, &finished)?;
+            let stopped = Instant::now();
+            let output = transcriber.stop_transcribing().map_err(|e| e.to_string())?;
+            let wait = stopped.elapsed();
+            Ok::<_, String>((expected, output, wait))
         })();
         match result {
-            Ok((expected, output)) => {
+            Ok((expected, output, wait)) => {
                 let expected = expected.trim();
-                let output = output.trim();
+                let raw = output.raw.trim();
+                let cleaned = output.cleaned.trim();
                 let expected_tokens = score::tokens(expected);
-                let errors = score::errors(&expected_tokens, &score::tokens(output));
+                let raw_score = score::errors(&expected_tokens, &score::tokens(raw));
+                let cleaned_score = score::errors(&expected_tokens, &score::tokens(cleaned));
                 let tokens = expected_tokens.len();
-                log::info!(
-                    "{name}  {:.1}%  ({errors}/{tokens})",
-                    score::rate(errors, tokens)
-                );
+                log::info!("{name}  wait {:.1} s", wait.as_secs_f64());
+                report("  raw    ", &raw_score, tokens);
+                report("  cleaned", &cleaned_score, tokens);
                 log::info!("  expected: {expected:?}");
-                log::info!("  got:      {output:?}");
-                total_errors += errors;
+                log::info!("  raw:      {raw:?}");
+                log::info!("  got:      {cleaned:?}");
+                if cleaned_score.total() > raw_score.total() {
+                    worse.push(name.to_string());
+                }
+                raw_errors.accumulate(&raw_score);
+                cleaned_errors.accumulate(&cleaned_score);
                 total_expected += tokens;
-                count += 1;
+                waits.push((wait, name.to_string()));
             }
             Err(error) => {
                 log::error!("{name}  failed: {error}");
@@ -110,10 +122,7 @@ pub(crate) fn run(folder: &Path, models: &Path) -> ExitCode {
             }
         }
     }
-    log::info!(
-        "overall: {:.1}%  ({total_errors}/{total_expected}) over {count} files",
-        score::rate(total_errors, total_expected)
-    );
+    report_overall(&raw_errors, &cleaned_errors, total_expected, &waits, &worse);
     if !skipped.is_empty() {
         let names: Vec<_> = skipped
             .iter()
@@ -126,6 +135,41 @@ pub(crate) fn run(folder: &Path, models: &Path) -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+fn report_overall(
+    raw: &score::Errors,
+    cleaned: &score::Errors,
+    tokens: usize,
+    waits: &[(Duration, String)],
+    worse: &[String],
+) {
+    report("overall raw    ", raw, tokens);
+    report("overall cleaned", cleaned, tokens);
+    if let Some((longest, name)) = waits.iter().max_by_key(|(wait, _)| *wait) {
+        let sum: Duration = waits.iter().map(|(wait, _)| *wait).sum();
+        #[expect(clippy::cast_precision_loss, reason = "practical file counts fit f64")]
+        let average = sum.as_secs_f64() / waits.len() as f64;
+        log::info!(
+            "wait             average {average:.1} s, longest {:.1} s ({name})",
+            longest.as_secs_f64()
+        );
+    }
+    if !worse.is_empty() {
+        log::info!("cleanup made these worse: {}", worse.join(", "));
+    }
+}
+
+fn report(label: &str, errors: &score::Errors, tokens: usize) {
+    log::info!(
+        "{label}  {:.1}%  ({}/{tokens})  case {}  punctuation {}  line breaks {}  words {}",
+        score::rate(errors.total(), tokens),
+        errors.total(),
+        errors.case,
+        errors.punctuation,
+        errors.line_breaks,
+        errors.words
+    );
 }
 
 #[cfg(test)]

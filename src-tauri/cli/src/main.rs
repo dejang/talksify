@@ -45,13 +45,18 @@ fn run(file: &Path, models: &Path) -> Result<String, String> {
         Arc::new(|_| {}),
     )
     .map_err(|e| e.to_string())?;
-    transcribe(&mut transcriber, &finished)
+    play_file(&mut transcriber, &finished)?;
+    transcriber
+        .stop_transcribing()
+        .map(|transcript| transcript.cleaned)
+        .map_err(|e| e.to_string())
 }
 
-fn transcribe(
+/// Starts capture and waits until the file source has finished playing.
+fn play_file(
     transcriber: &mut Transcriber<FileSource>,
     finished: &AtomicBool,
-) -> Result<String, String> {
+) -> Result<(), String> {
     transcriber
         .start_transcribing(None)
         .map_err(|e| e.to_string())?;
@@ -61,7 +66,7 @@ fn transcribe(
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    transcriber.stop_transcribing().map_err(|e| e.to_string())
+    Ok(())
 }
 
 fn main() -> ExitCode {

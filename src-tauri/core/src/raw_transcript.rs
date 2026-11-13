@@ -1,3 +1,12 @@
+/// Raw and cleaned text from one recording.
+#[derive(Debug, Default, Clone)]
+pub struct Transcript {
+    /// The STT segments joined with spaces, before any cleanup.
+    pub raw: String,
+    /// The final text after cleanup.
+    pub cleaned: String,
+}
+
 #[derive(Debug, Default, Clone)]
 pub(crate) struct RawTranscript {
     pub(crate) sentences: Vec<String>,

@@ -9,7 +9,7 @@ use crate::audio_device::{AudioDevice, AudioProcessor, HeapCons, HeapProd, Input
 use crate::audio_source::AudioSource;
 use crate::llm_postprocessor::LlmPostProcessor;
 use crate::parakeet_stt::ParakeetStt;
-use crate::raw_transcript::RawTranscript;
+use crate::raw_transcript::{RawTranscript, Transcript};
 use crate::recording;
 use crate::stt::Stt;
 
@@ -231,7 +231,7 @@ impl<A: AudioSource + 'static> Transcriber<A> {
 
     /// # Errors
     /// Returns an error if idle or flushing the transcript fails.
-    pub fn stop_transcribing(&mut self) -> Result<String, TranscriberError> {
+    pub fn stop_transcribing(&mut self) -> Result<Transcript, TranscriberError> {
         if !self.is_recording.load(Ordering::Relaxed) {
             return Err(TranscriberError::NotRunning);
         }
@@ -270,7 +270,10 @@ impl<A: AudioSource + 'static> Transcriber<A> {
         );
         let cleaned = self.llm.clean_transcript(&raw);
         log::info!("[transcriber] cleaned: {cleaned:?}");
-        Ok(cleaned)
+        Ok(Transcript {
+            raw: raw.to_joined_string(),
+            cleaned,
+        })
     }
 
     #[must_use]
@@ -435,7 +438,7 @@ mod tests {
         assert!(transcriber.start_transcribing(None).is_err());
         let text = transcriber.stop_transcribing().unwrap();
         assert!(!transcriber.is_transcribing());
-        text.to_lowercase()
+        text.cleaned.to_lowercase()
     }
 
     #[test]
