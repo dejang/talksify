@@ -247,7 +247,7 @@ pub(crate) mod tests {
                 .map(str::to_lowercase)
         }
 
-        /// Whether more than 10% of `input` is missing from `output`.
+        /// Whether more than 8.5% of `input` is missing from `output`.
         pub(crate) fn over_cut(&mut self, input: &str, output: &str) -> bool {
             self.seen.clear();
             self.seen.extend(Self::words(output));
@@ -290,7 +290,31 @@ pub(crate) mod tests {
                     self.dropped.push(word);
                 }
             }
-            self.dropped.len() * 10 > self.checked
+            self.dropped.len() * 200 > self.checked * 17
+        }
+    }
+
+    #[test]
+    fn word_check_enforces_eight_point_five_percent_boundary() {
+        let mut check = WordCheck::default();
+        let words: Vec<_> = (0..200).map(|n| format!("lexeme{n}")).collect();
+        for (checked, dropped, over_cut) in [
+            (0, 0, false),
+            (12, 1, false),
+            (11, 1, true),
+            (200, 17, false),
+            (200, 18, true),
+            (12, 0, false),
+        ] {
+            let input = words[..checked].join(" ");
+            let output = words[dropped..checked].join(" ");
+            assert_eq!(
+                check.over_cut(&input, &output),
+                over_cut,
+                "{dropped}/{checked}"
+            );
+            assert_eq!(check.checked, checked);
+            assert_eq!(check.dropped.len(), dropped);
         }
     }
 
@@ -438,7 +462,7 @@ pub(crate) mod tests {
     }
 
     // Each case: STT chunks, phrases the output must contain (case-insensitive), phrases it must
-    // not. At most 10% of spoken words may be dropped.
+    // not. At most 8.5% of spoken words may be dropped.
     #[test]
     #[ignore = "loads the bundled LLM; run with --ignored --nocapture"]
     fn clean_prompt_eval() {
