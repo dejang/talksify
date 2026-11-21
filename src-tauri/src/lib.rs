@@ -107,9 +107,11 @@ fn build_tray(app: &tauri::App, hotkey: String) -> tauri::Result<Arc<Updater>> {
     Ok(updater)
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    let result = tauri::Builder::default()
+/// Runs the desktop Tauri application.
+/// # Errors
+/// Returns an error if Tauri fails to initialize or run.
+pub fn run() -> tauri::Result<()> {
+    tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Debug)
@@ -167,9 +169,5 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!());
-
-    if let Err(e) = result {
-        log::error!("tauri failed: {e}");
-    }
+        .run(tauri::generate_context!())
 }

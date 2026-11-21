@@ -236,12 +236,7 @@ pub(crate) mod tests {
         bytes[data..].to_vec()
     }
 
-    /// Speaks `text` as 16 kHz mono f32, the format `push_audio` expects.
-    pub(crate) fn synthesize(text: &str) -> Vec<f32> {
-        synthesize_in(None, text)
-    }
-
-    /// Like `synthesize`, in a `say` voice such as "Anna" (German).
+    /// Speaks `text` as 16 kHz mono f32 in an optional `say` voice such as "Anna" (German).
     pub(crate) fn synthesize_in(voice: Option<&str>, text: &str) -> Vec<f32> {
         let bytes = say(text, "LEF32@16000", voice);
         let (samples, _) = bytes.as_chunks::<4>();
@@ -259,7 +254,8 @@ pub(crate) mod tests {
             move |text: String| chunks.lock().unwrap().push(text)
         }));
 
-        let audio = synthesize(
+        let audio = synthesize_in(
+            None,
             "So these are small text improvements that are rewrites, but they're not complete \
              rewrites, if that makes any sense. [[slnc 1500]] The tests pass locally, but on the \
              build server they time out.",

@@ -355,7 +355,7 @@ mod tests {
     use cpal::Sample;
 
     use super::*;
-    use crate::parakeet_stt::tests::{say, synthesize, synthesize_in};
+    use crate::parakeet_stt::tests::{say, synthesize_in};
     use crate::{AudioError, HeapCons};
 
     #[derive(Clone)]
@@ -564,7 +564,7 @@ mod tests {
 
         for (speech, must, must_not) in cases {
             let out = harness.transcribe(
-                synthesize(speech),
+                synthesize_in(None, speech),
                 InputFormat {
                     sample_rate: 16_000,
                     channels: 1,

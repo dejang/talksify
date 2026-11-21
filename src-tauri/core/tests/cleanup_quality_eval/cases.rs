@@ -29,9 +29,10 @@ pub(crate) mod suite {
         }
 
         fn push_explicit_corrections(&mut self) {
+            let category = "explicit-self-correction";
             self.cases.extend([
                 QualityCase::new(
-                    "explicit-self-correction",
+                    category,
                     "recipient-and-day",
                     &["Send the update to Alice. No, sorry, send it to Bob on Friday."],
                     &["Send the update to Bob on Friday."],
@@ -44,7 +45,7 @@ pub(crate) mod suite {
                     "Send the update to Bob on Friday",
                 ]),
                 QualityCase::new(
-                    "explicit-self-correction",
+                    category,
                     "meeting-day",
                     &["Book the room for Tuesday, actually make that Thursday afternoon."],
                     &[
@@ -57,7 +58,7 @@ pub(crate) mod suite {
                     "Book the room for Thursday afternoon?",
                 ]),
                 QualityCase::new(
-                    "explicit-self-correction",
+                    category,
                     "timeout-value",
                     &["Set the timeout to five seconds. Wait, scratch that, make it thirty seconds."],
                     &[
@@ -77,7 +78,7 @@ pub(crate) mod suite {
                     "Make the timeout -30 seconds.",
                 ]),
                 QualityCase::new(
-                    "explicit-self-correction",
+                    category,
                     "deploy-target",
                     &["Deploy to staging first. I mean production, directly to production."],
                     &["Deploy directly to production."],
@@ -92,9 +93,11 @@ pub(crate) mod suite {
         }
 
         fn push_restarts_and_pruning(&mut self) {
+            let restart = "mid-thought-restart";
+            let pruning = "thinking-aloud-pruning";
             self.cases.extend([
                 QualityCase::new(
-                    "mid-thought-restart",
+                    restart,
                     "query-return-type",
                     &["The query returns false. Actually it returns the list of matched records."],
                     &[
@@ -107,7 +110,7 @@ pub(crate) mod suite {
                     "The query returns false. Actually, it returns the list of matched records.",
                 ]),
                 QualityCase::new(
-                    "mid-thought-restart",
+                    restart,
                     "cache-location",
                     &["We tried caching the tokens, no, we moved the cache into the worker pool instead."],
                     &[
@@ -116,7 +119,7 @@ pub(crate) mod suite {
                     ],
                 ),
                 QualityCase::new(
-                    "mid-thought-restart",
+                    restart,
                     "parser-format",
                     &["The parser expects JSON. Well, actually it expects YAML with strict keys."],
                     &[
@@ -126,7 +129,7 @@ pub(crate) mod suite {
                     ],
                 ),
                 QualityCase::new(
-                    "thinking-aloud-pruning",
+                    pruning,
                     "config-path",
                     &["We can pass the config path, or maybe yeah the config path is fine."],
                     &[
@@ -140,7 +143,7 @@ pub(crate) mod suite {
                     "We can pass the config path, or maybe yeah, the config path is fine.",
                 ]),
                 QualityCase::new(
-                    "thinking-aloud-pruning",
+                    pruning,
                     "flag-name",
                     &["Let's name the flag verbose, or wait, yeah let's keep it verbose for now."],
                     &[
@@ -154,7 +157,7 @@ pub(crate) mod suite {
                     "Let's keep the flag verbose.",
                 ]),
                 QualityCase::new(
-                    "thinking-aloud-pruning",
+                    pruning,
                     "index-instead-of-split",
                     &["Should we split the table? Actually never mind, just add an index on created_at."],
                     &[
@@ -169,15 +172,16 @@ pub(crate) mod suite {
         }
 
         fn push_false_starts(&mut self) {
+            let category = "cutoff-false-start";
             self.cases.extend([
                 QualityCase::new(
-                    "cutoff-false-start",
+                    category,
                     "contraction-restart",
                     &["It's it works every time."],
                     &["It works every time."],
                 ),
                 QualityCase::new(
-                    "cutoff-false-start",
+                    category,
                     "partial-word-prefix",
                     &["More in the dir in the direction of lower latency."],
                     &["More in the direction of lower latency."],
@@ -187,7 +191,7 @@ pub(crate) mod suite {
                     "In the direction of lower latency.",
                 ]),
                 QualityCase::new(
-                    "cutoff-false-start",
+                    category,
                     "verb-repair",
                     &["What we're passing in is are two separate files."],
                     &[
@@ -197,7 +201,7 @@ pub(crate) mod suite {
                 )
                 .rejecting(&["What we're passing in are -2 separate files."]),
                 QualityCase::new(
-                    "cutoff-false-start",
+                    category,
                     "truncated-noun",
                     &["The arch the architecture diagram needs an update before review."],
                     &["The architecture diagram needs an update before review."],
@@ -206,9 +210,10 @@ pub(crate) mod suite {
         }
 
         fn push_forced_pauses(&mut self) {
+            let category = "forced-pause-break";
             self.cases.extend([
                 QualityCase::new(
-                    "forced-pause-break",
+                    category,
                     "release-runner",
                     &[
                         "The build is fast locally, but on the.",
@@ -230,7 +235,7 @@ pub(crate) mod suite {
                     "The build is fast locally. But on the release runner it stalls.",
                 ]),
                 QualityCase::new(
-                    "forced-pause-break",
+                    category,
                     "feature-flag",
                     &[
                         "Make sure the migration runs before we.",
@@ -246,7 +251,7 @@ pub(crate) mod suite {
                     "Make sure. The migration runs before we flip the feature flag in production.",
                 ]),
                 QualityCase::new(
-                    "forced-pause-break",
+                    category,
                     "metrics-endpoint",
                     &[
                         "After restarting the daemon, the metrics.",
