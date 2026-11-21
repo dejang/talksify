@@ -6,15 +6,15 @@ use cpal::{
 };
 use rubato::{FftFixedIn, Resampler};
 
+pub(crate) fn ring_buffer<T>(capacity: usize) -> (HeapProd<T>, HeapCons<T>) {
+    let (tx, rx) = rtrb::RingBuffer::new(capacity);
+    (HeapProd(tx), rx)
+}
+
 /// Ring-buffer producer for pushing captured or resampled audio without blocking.
 pub(crate) struct HeapProd<T>(rtrb::Producer<T>);
 
 impl<T> HeapProd<T> {
-    pub(crate) fn ring_buffer(capacity: usize) -> (Self, HeapCons<T>) {
-        let (tx, rx) = rtrb::RingBuffer::new(capacity);
-        (Self(tx), rx)
-    }
-
     pub(crate) fn push(&mut self, value: T) -> Result<(), rtrb::PushError<T>> {
         self.0.push(value)
     }
@@ -36,6 +36,32 @@ impl<T> HeapProd<T> {
     }
 }
 
+impl HeapProd<f32> {
+    /// Opens an input stream whose real-time callback only scales samples into the ring buffer.
+    fn build_input_stream<T>(
+        mut self,
+        device: &cpal::Device,
+        config: &StreamConfig,
+    ) -> Result<Stream, AudioError>
+    where
+        T: SizedSample,
+        f32: FromSample<T>,
+    {
+        device
+            .build_input_stream(
+                config,
+                move |data: &[T], _| {
+                    for sample in data {
+                        let _ = self.push(f32::from_sample(*sample));
+                    }
+                },
+                |err: StreamError| log::error!("audio callback error: {err}"),
+                None,
+            )
+            .map_err(|e| AudioError::StreamError(e.to_string()))
+    }
+}
+
 pub type HeapCons<T> = rtrb::Consumer<T>;
 
 #[derive(Debug, thiserror::Error)]
@@ -51,6 +77,20 @@ pub enum AudioError {
 pub struct InputFormat {
     pub sample_rate: u32,
     pub channels: u16,
+}
+
+impl InputFormat {
+    /// Computes playback duration in seconds for interleaved samples in this format.
+    #[must_use]
+    pub fn duration_secs(self, sample_count: usize) -> f64 {
+        let frames = sample_count.div_ceil(usize::from(self.channels));
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "frame counts fit f64 for practical audio clips"
+        )]
+        let duration = frames as f64 / f64::from(self.sample_rate);
+        duration
+    }
 }
 
 pub struct AudioDevice {
@@ -108,18 +148,18 @@ impl AudioSource for AudioDevice {
 
         let capacity =
             format.sample_rate as usize * usize::from(format.channels) * self.ring_seconds;
-        let (producer, consumer) = HeapProd::ring_buffer(capacity);
+        let (producer, consumer) = ring_buffer(capacity);
         let stream = match config.sample_format() {
-            SampleFormat::F32 => build_stream::<f32>(&device, &stream_config, producer),
-            SampleFormat::F64 => build_stream::<f64>(&device, &stream_config, producer),
-            SampleFormat::I8 => build_stream::<i8>(&device, &stream_config, producer),
-            SampleFormat::I16 => build_stream::<i16>(&device, &stream_config, producer),
-            SampleFormat::I32 => build_stream::<i32>(&device, &stream_config, producer),
-            SampleFormat::I64 => build_stream::<i64>(&device, &stream_config, producer),
-            SampleFormat::U8 => build_stream::<u8>(&device, &stream_config, producer),
-            SampleFormat::U16 => build_stream::<u16>(&device, &stream_config, producer),
-            SampleFormat::U32 => build_stream::<u32>(&device, &stream_config, producer),
-            SampleFormat::U64 => build_stream::<u64>(&device, &stream_config, producer),
+            SampleFormat::F32 => producer.build_input_stream::<f32>(&device, &stream_config),
+            SampleFormat::F64 => producer.build_input_stream::<f64>(&device, &stream_config),
+            SampleFormat::I8 => producer.build_input_stream::<i8>(&device, &stream_config),
+            SampleFormat::I16 => producer.build_input_stream::<i16>(&device, &stream_config),
+            SampleFormat::I32 => producer.build_input_stream::<i32>(&device, &stream_config),
+            SampleFormat::I64 => producer.build_input_stream::<i64>(&device, &stream_config),
+            SampleFormat::U8 => producer.build_input_stream::<u8>(&device, &stream_config),
+            SampleFormat::U16 => producer.build_input_stream::<u16>(&device, &stream_config),
+            SampleFormat::U32 => producer.build_input_stream::<u32>(&device, &stream_config),
+            SampleFormat::U64 => producer.build_input_stream::<u64>(&device, &stream_config),
             format => {
                 return Err(AudioError::StreamError(format!(
                     "unsupported sample format: {format:?}"
@@ -145,30 +185,6 @@ impl AudioSource for AudioDevice {
         }
         Ok(())
     }
-}
-
-/// Opens an input stream whose real-time callback only scales samples into the ring buffer.
-fn build_stream<T>(
-    device: &cpal::Device,
-    config: &StreamConfig,
-    mut producer: HeapProd<f32>,
-) -> Result<Stream, AudioError>
-where
-    T: SizedSample,
-    f32: FromSample<T>,
-{
-    device
-        .build_input_stream(
-            config,
-            move |data: &[T], _| {
-                for sample in data {
-                    let _ = producer.push(f32::from_sample(*sample));
-                }
-            },
-            |err: StreamError| log::error!("audio callback error: {err}"),
-            None,
-        )
-        .map_err(|e| AudioError::StreamError(e.to_string()))
 }
 
 /// Downmixes the device's interleaved samples to mono and resamples them to the model's rate,
@@ -282,7 +298,10 @@ impl LevelMeter {
         if self.count < self.window {
             return None;
         }
-        #[expect(clippy::cast_precision_loss, reason = "a window is far below 2^24 samples")]
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a window is far below 2^24 samples"
+        )]
         let count = self.count as f32;
         let rms = (self.sum_squares / count).sqrt();
         self.sum_squares = 0.0;
@@ -415,7 +434,9 @@ mod tests {
     fn level_meter_maps_silence_and_speech() {
         let mut meter = LevelMeter::new(480, -55.0, 45.0);
         assert!(meter.push(&[0.0; 480]).is_some_and(|l| l < 0.01));
-        let tone: Vec<f32> = (0..480u16).map(|i| 0.1 * (f32::from(i) * 0.3).sin()).collect();
+        let tone: Vec<f32> = (0..480u16)
+            .map(|i| 0.1 * (f32::from(i) * 0.3).sin())
+            .collect();
         // A 0.1-amplitude sine is about -23 dBFS, so roughly 70% of the meter.
         assert!(meter.push(&tone).is_some_and(|l| (0.6..0.8).contains(&l)));
         assert!(meter.push(&[1.0; 480]).is_some_and(|l| l > 0.99));
@@ -423,7 +444,7 @@ mod tests {
 
     #[test]
     fn heap_prod_push_slice_writes_available_and_counts_drops() {
-        let (mut tx, mut rx) = HeapProd::ring_buffer(4);
+        let (mut tx, mut rx) = ring_buffer(4);
         assert_eq!(tx.push_slice(&[1i32, 2, 3]), 0);
         assert_eq!(tx.push_slice(&[4, 5, 6]), 2);
         let mut drained = Vec::new();
@@ -431,5 +452,19 @@ mod tests {
             drained.push(sample);
         }
         assert_eq!(drained, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn input_format_computes_duration_from_sample_count() {
+        let stereo_16k = InputFormat {
+            sample_rate: 16_000,
+            channels: 2,
+        };
+        for (samples, expected) in [(32_000, 1.0), (32_001, 16_001.0 / 16_000.0), (0, 0.0)] {
+            assert!(
+                (stereo_16k.duration_secs(samples) - expected).abs() < 1e-9,
+                "samples={samples}"
+            );
+        }
     }
 }

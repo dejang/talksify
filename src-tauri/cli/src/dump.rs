@@ -51,8 +51,8 @@ impl RawDump {
     }
 
     pub(crate) fn read(path: &Path) -> Result<Self, String> {
-        let json = fs::read_to_string(path)
-            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let json =
+            fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let entries: Vec<RawEntry> = serde_json::from_str(&json)
             .map_err(|e| format!("cannot parse {}: {e}", path.display()))?;
         let dump = Self { entries };
@@ -106,7 +106,31 @@ pub(crate) struct StagedDump {
 
 impl StagedDump {
     pub(crate) fn prepare(path: &Path) -> Result<Self, String> {
-        Self::ensure_destination_available(path)?;
+        let bytes = path.as_os_str().as_encoded_bytes();
+        let trailing_sep = bytes
+            .last()
+            .is_some_and(|&byte| std::path::is_separator(char::from(byte)));
+        let trailing_cur_dir = bytes == b"."
+            || (bytes.len() >= 2
+                && bytes[bytes.len() - 1] == b'.'
+                && std::path::is_separator(char::from(bytes[bytes.len() - 2])));
+        if trailing_sep || trailing_cur_dir || path.file_name().is_none() {
+            return Err(format!(
+                "cannot write {}: invalid destination path",
+                path.display()
+            ));
+        }
+        match fs::symlink_metadata(path) {
+            Ok(_) => {
+                return Err(format!(
+                    "cannot write {}: destination already exists",
+                    path.display()
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("cannot inspect {}: {error}", path.display())),
+        }
+
         let parent = path
             .parent()
             .filter(|dir| !dir.as_os_str().is_empty())
@@ -150,31 +174,6 @@ impl StagedDump {
             }
         })?;
         Ok(dump.len())
-    }
-
-    fn ensure_destination_available(path: &Path) -> Result<(), String> {
-        let bytes = path.as_os_str().as_encoded_bytes();
-        let trailing_sep = bytes
-            .last()
-            .is_some_and(|&byte| std::path::is_separator(char::from(byte)));
-        let trailing_cur_dir = bytes == b"."
-            || (bytes.len() >= 2
-                && bytes[bytes.len() - 1] == b'.'
-                && std::path::is_separator(char::from(bytes[bytes.len() - 2])));
-        if trailing_sep || trailing_cur_dir || path.file_name().is_none() {
-            return Err(format!(
-                "cannot write {}: invalid destination path",
-                path.display()
-            ));
-        }
-        match fs::symlink_metadata(path) {
-            Ok(_) => Err(format!(
-                "cannot write {}: destination already exists",
-                path.display()
-            )),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(format!("cannot inspect {}: {error}", path.display())),
-        }
     }
 }
 

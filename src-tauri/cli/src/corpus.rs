@@ -104,7 +104,7 @@ impl SampleRunner<WavPair> for WavRunner {
             .unwrap_or_else(PoisonError::into_inner)
             .clone_from(&pair.wav);
         self.playback.reset();
-        let duration_secs = FileSource::play_into(&mut self.transcriber, &self.playback)?;
+        let duration_secs = self.playback.play(&mut self.transcriber)?;
         let stopped = Instant::now();
         let transcript = self
             .transcriber

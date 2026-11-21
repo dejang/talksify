@@ -1,13 +1,13 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Config {
-    pub(crate) hotkey: String,
-    pub(crate) audio_device: Option<String>,
-    pub(crate) model_dir: PathBuf,
+    hotkey: String,
+    audio_device: Option<String>,
+    model_dir: PathBuf,
 }
 
 impl Default for Config {
@@ -21,9 +21,8 @@ impl Default for Config {
 }
 
 impl Config {
-    pub(crate) fn load(resource_dir: &std::path::Path) -> Self {
-        let config_path =
-            dirs::config_dir().map(|d| d.join("talksify").join("config.toml"));
+    pub(crate) fn load(resource_dir: &Path) -> Self {
+        let config_path = dirs::config_dir().map(|d| d.join("talksify").join("config.toml"));
 
         let mut cfg: Self = config_path
             .as_ref()
@@ -33,5 +32,17 @@ impl Config {
 
         cfg.model_dir = resource_dir.join("models");
         cfg
+    }
+
+    pub(crate) fn hotkey(&self) -> &str {
+        &self.hotkey
+    }
+
+    pub(crate) fn audio_device(&self) -> Option<&str> {
+        self.audio_device.as_deref()
+    }
+
+    pub(crate) fn model_dir(&self) -> &Path {
+        &self.model_dir
     }
 }

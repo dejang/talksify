@@ -45,6 +45,10 @@ Use a colon (\":\") when a clause introduces what comes next (such as \"the prob
         }
     }
 
+    pub(crate) fn set_backend(&mut self, backend: Box<dyn LlmBackend>) {
+        self.backend = Some(backend);
+    }
+
     pub(crate) fn warm_up(&mut self) -> Result<(), String> {
         self.backend = None;
         self.load_error = None;
@@ -66,7 +70,7 @@ Use a colon (\":\") when a clause introduces what comes next (such as \"the prob
 
         match MistralBackend::load_and_warm(&gguf) {
             Ok(backend) => {
-                self.backend = Some(Box::new(backend));
+                self.set_backend(Box::new(backend));
                 Ok(())
             }
             Err(error) => {
@@ -100,9 +104,21 @@ Use a colon (\":\") when a clause introduces what comes next (such as \"the prob
         if raw_text.is_empty() {
             return Ok(String::new());
         }
-        let fixed = self
-            .formatter
-            .format_lists(&remove_repeats(&Self::basic_case_fix(&raw_text)));
+        let lower = raw_text.to_lowercase();
+        let mut cased = String::with_capacity(lower.len());
+        let mut capitalize_next = true;
+        for ch in lower.chars() {
+            if capitalize_next && ch.is_alphabetic() {
+                cased.extend(ch.to_uppercase());
+                capitalize_next = false;
+            } else {
+                cased.push(ch);
+            }
+            if ch == '.' || ch == '!' || ch == '?' {
+                capitalize_next = true;
+            }
+        }
+        let fixed = self.formatter.format_lists(&remove_repeats(&cased));
         let Some(backend) = &self.backend else {
             log::info!("[llm] no model, applying basic case fix");
             return Ok(conventions::apply(&fixed));
@@ -145,46 +161,66 @@ Use a colon (\":\") when a clause introduces what comes next (such as \"the prob
         log::info!("[llm] output ({elapsed:?}): {result:?}");
         Ok(self.formatter.format_lists(&remove_repeats(result)))
     }
-
-    fn basic_case_fix(text: &str) -> String {
-        let lower = text.to_lowercase();
-        let mut result = String::with_capacity(lower.len());
-        let mut capitalize_next = true;
-        for ch in lower.chars() {
-            if capitalize_next && ch.is_alphabetic() {
-                result.extend(ch.to_uppercase());
-                capitalize_next = false;
-            } else {
-                result.push(ch);
-            }
-            if ch == '.' || ch == '!' || ch == '?' {
-                capitalize_next = true;
-            }
-        }
-        result
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::time::Duration;
 
     use super::*;
 
     struct StubBackend {
         response: Result<Completion, String>,
+        delay: Duration,
+    }
+
+    struct BackendCase<'a> {
+        label: &'a str,
+        response: Result<(&'a str, &'a str), &'a str>,
+        delay: Duration,
+        input: &'a str,
+        ordinary: &'a str,
+        strict: Result<&'a str, &'a str>,
     }
 
     impl StubBackend {
-        fn with_response(response: Result<Completion, String>) -> LlmPostProcessor {
+        fn with_response(
+            response: Result<Completion, String>,
+            delay: Duration,
+        ) -> LlmPostProcessor {
             let mut proc = LlmPostProcessor::new(Path::new("/tmp"));
-            proc.backend = Some(Box::new(Self { response }));
+            proc.set_backend(Box::new(Self { response, delay }));
             proc
+        }
+
+        fn assert_case(case: &BackendCase<'_>) {
+            let response = match case.response {
+                Ok((text, finish_reason)) => Ok(Completion {
+                    text: text.into(),
+                    finish_reason: finish_reason.into(),
+                }),
+                Err(error) => Err(error.into()),
+            };
+            let proc = Self::with_response(response, case.delay);
+            assert!(proc.is_ready(), "{}", case.label);
+            let raw = RawTranscript::from_text(case.input);
+            assert_eq!(proc.clean_transcript(&raw), case.ordinary, "{}", case.label);
+            match (proc.try_clean_transcript(&raw), case.strict) {
+                (Ok(actual), Ok(expected)) => assert_eq!(actual, expected, "{}", case.label),
+                (Err(actual), Err(substr)) => {
+                    assert!(actual.contains(substr), "{}: got {actual:?}", case.label);
+                }
+                (got, want) => panic!("{}: got {got:?}, want {want:?}", case.label),
+            }
         }
     }
 
     impl LlmBackend for StubBackend {
         fn complete(&self, _transcript: &str, _prompt: &str) -> Result<Completion, String> {
+            if !self.delay.is_zero() {
+                std::thread::sleep(self.delay);
+            }
             match &self.response {
                 Ok(completion) => Ok(Completion {
                     text: completion.text.clone(),
@@ -212,18 +248,17 @@ mod tests {
 
         /// Whether more than 8.5% of `input` is missing from `output`.
         fn over_cut(&mut self, input: &str, output: &str) -> bool {
+            let skipped = [
+                "um", "umm", "uh", "uhh", "uhm", "erm", "er", "hmm", "hm", "mm", "mhm", "1", "2",
+                "3", "4", "5", "one", "two", "three", "four", "five", "first", "second", "third",
+                "fourth", "fifth",
+            ];
             self.seen.clear();
             self.seen.extend(Self::words(output));
             self.dropped.clear();
             self.checked = 0;
             for word in Self::words(input) {
-                let skipped = matches!(
-                    word.as_str(),
-                    "um" | "umm" | "uh" | "uhh" | "uhm" | "erm" | "er" | "hmm" | "hm" | "mm"
-                        | "mhm" | "1" | "2" | "3" | "4" | "5" | "one" | "two" | "three" | "four"
-                        | "five" | "first" | "second" | "third" | "fourth" | "fifth"
-                );
-                if skipped {
+                if skipped.contains(&word.as_str()) {
                     continue;
                 }
                 self.checked += 1;
@@ -249,8 +284,15 @@ mod tests {
             let mut proc = LlmPostProcessor::new(&models);
             proc.warm_up()
                 .unwrap_or_else(|e| panic!("LLM failed to load from {}: {e}", models.display()));
-            assert!(proc.is_ready(), "LLM failed to load from {}", models.display());
-            Self { proc, word_check: WordCheck::default() }
+            assert!(
+                proc.is_ready(),
+                "LLM failed to load from {}",
+                models.display()
+            );
+            Self {
+                proc,
+                word_check: WordCheck::default(),
+            }
         }
 
         fn failures(&mut self, cases: &[EvalCase]) -> Vec<String> {
@@ -268,7 +310,10 @@ mod tests {
                 let lower = out.to_lowercase();
                 let input = raw.to_joined_string();
                 let over_cut = self.word_check.over_cut(&input, &out);
-                println!("IN:  {input}\nOUT: {out}\n({elapsed:?}, dropped {:?})\n", self.word_check.dropped);
+                println!(
+                    "IN:  {input}\nOUT: {out}\n({elapsed:?}, dropped {:?})\n",
+                    self.word_check.dropped
+                );
                 missing.clear();
                 missing.extend(must.iter().filter(|m| !lower.contains(**m)));
                 present.clear();
@@ -315,16 +360,18 @@ mod tests {
         assert_eq!(proc.warm_up(), Ok(()));
         assert!(!proc.is_ready());
 
-        let cases: &[(&[&str], &str)] = &[
-            (&[], ""),
-            (&["hello", "world"], "Hello world"),
-            (&["One, we plan. Two, we build."], "1. We plan.\n2. We build."),
+        for &(chunks, expected) in &[
+            (&[][..], ""),
+            (&["hello", "world"][..], "Hello world"),
             (
-                &["Twelve files in dot wav and ten percent."],
+                &["One, we plan. Two, we build."][..],
+                "1. We plan.\n2. We build.",
+            ),
+            (
+                &["Twelve files in dot wav and ten percent."][..],
                 "12 files in .wav and 10%.",
             ),
-        ];
-        for &(chunks, expected) in cases {
+        ] {
             let mut raw = RawTranscript::default();
             for chunk in chunks {
                 raw.push_words((*chunk).into());
@@ -349,85 +396,59 @@ mod tests {
     }
 
     #[test]
-    fn completed_cleanup_is_independent_of_latency() {
-        let proc = LlmPostProcessor::new(Path::new("/tmp"));
-        let ok = Completion { text: "Zephyrs shimmer.".into(), finish_reason: "stop".into() };
-        let empty = Completion { text: String::new(), finish_reason: "stop".into() };
-        for seconds in [0, 10, 11, 120] {
-            let elapsed = std::time::Duration::from_secs(seconds);
-            assert_eq!(proc.finish_cleanup(&ok, "Zzz".into(), elapsed, false), Ok("Zephyrs shimmer.".into()));
-            assert_eq!(proc.finish_cleanup(&ok, "Zzz".into(), elapsed, true), Ok("Zephyrs shimmer.".into()));
-            assert_eq!(proc.finish_cleanup(&empty, "Zzz".into(), elapsed, false), Ok("Zzz".into()));
-            assert!(proc.finish_cleanup(&empty, "Zzz".into(), elapsed, true).is_err());
-        }
-    }
-
-    #[test]
     fn strict_and_ordinary_cleanup_with_backend() {
-        type Case<'a> = (
-            &'a str,
-            Result<(&'a str, &'a str), &'a str>,
-            &'a str,
-            &'a str,
-            Result<&'a str, &'a str>,
-        );
-        let cases: &[Case<'_>] = &[
-            (
-                "inference error",
-                Err("LLM inference failed: simulated runtime error"),
-                "um hello world. twelve files in dot wav.",
-                "Hello world. 12 files in .wav.",
-                Err("simulated runtime error"),
-            ),
-            (
-                "length capped",
-                Ok(("Das Problem bei Elementarsch", "length")),
-                "Das Problem bei Elementarschadenversicherung ist bekannt.",
-                "Das Problem bei Elementarsch",
-                Err("length"),
-            ),
-            (
-                "abnormal finish reason",
-                Ok(("Partial text", "error")),
-                "Das Problem bei Elementarschadenversicherung ist bekannt.",
-                "Partial text",
-                Err("finish_reason"),
-            ),
-            (
-                "normal completion",
-                Ok(("Hello world. Twelve files in dot wav.", "stop")),
-                "um hello world. twelve files in dot wav.",
-                "Hello world. 12 files in .wav.",
-                Ok("Hello world. 12 files in .wav."),
-            ),
+        let cases = [
+            BackendCase {
+                label: "inference error",
+                response: Err("LLM inference failed: simulated runtime error"),
+                delay: Duration::ZERO,
+                input: "um hello world. twelve files in dot wav.",
+                ordinary: "Hello world. 12 files in .wav.",
+                strict: Err("simulated runtime error"),
+            },
+            BackendCase {
+                label: "length capped",
+                response: Ok(("Das Problem bei Elementarsch", "length")),
+                delay: Duration::ZERO,
+                input: "Das Problem bei Elementarschadenversicherung ist bekannt.",
+                ordinary: "Das Problem bei Elementarsch",
+                strict: Err("length"),
+            },
+            BackendCase {
+                label: "abnormal finish reason",
+                response: Ok(("Partial text", "error")),
+                delay: Duration::ZERO,
+                input: "Das Problem bei Elementarschadenversicherung ist bekannt.",
+                ordinary: "Partial text",
+                strict: Err("finish_reason"),
+            },
+            BackendCase {
+                label: "normal completion",
+                response: Ok(("Hello world. Twelve files in dot wav.", "stop")),
+                delay: Duration::ZERO,
+                input: "um hello world. twelve files in dot wav.",
+                ordinary: "Hello world. 12 files in .wav.",
+                strict: Ok("Hello world. 12 files in .wav."),
+            },
+            BackendCase {
+                label: "delayed completion",
+                response: Ok(("Zephyrs shimmer.", "stop")),
+                delay: Duration::from_millis(15),
+                input: "zzz",
+                ordinary: "Zephyrs shimmer.",
+                strict: Ok("Zephyrs shimmer."),
+            },
+            BackendCase {
+                label: "delayed empty completion",
+                response: Ok(("", "stop")),
+                delay: Duration::from_millis(15),
+                input: "zzz",
+                ordinary: "Zzz",
+                strict: Err("no usable transcript text"),
+            },
         ];
-
-        let run_case = |label: &str,
-                        response: Result<(&str, &str), &str>,
-                        input: &str,
-                        expected_ordinary: &str,
-                        expected_strict: Result<&str, &str>| {
-            let proc = StubBackend::with_response(match response {
-                Ok((text, finish_reason)) => Ok(Completion {
-                    text: text.into(),
-                    finish_reason: finish_reason.into(),
-                }),
-                Err(error) => Err(error.into()),
-            });
-            assert!(proc.is_ready(), "{label}");
-            let raw = RawTranscript::from_text(input);
-            assert_eq!(proc.clean_transcript(&raw), expected_ordinary, "{label}");
-            match (proc.try_clean_transcript(&raw), expected_strict) {
-                (Ok(actual), Ok(expected)) => assert_eq!(actual, expected, "{label}"),
-                (Err(actual), Err(substr)) => {
-                    assert!(actual.contains(substr), "{label}: got {actual:?}");
-                }
-                (got, want) => panic!("{label}: got {got:?}, want {want:?}"),
-            }
-        };
-
-        for &(label, response, input, expected_ordinary, expected_strict) in cases {
-            run_case(label, response, input, expected_ordinary, expected_strict);
+        for case in &cases {
+            StubBackend::assert_case(case);
         }
         for empty_reply in [
             "",
@@ -437,17 +458,17 @@ mod tests {
             "<transcript>",
             "</transcript>",
         ] {
-            run_case(
-                empty_reply,
-                Ok((empty_reply, "stop")),
-                "Did the nightly backup finish?",
-                "Did the nightly backup finish?",
-                Err("no usable transcript text"),
-            );
+            StubBackend::assert_case(&BackendCase {
+                label: empty_reply,
+                response: Ok((empty_reply, "stop")),
+                delay: Duration::ZERO,
+                input: "Did the nightly backup finish?",
+                ordinary: "Did the nightly backup finish?",
+                strict: Err("no usable transcript text"),
+            });
         }
 
-        // Empty, whitespace-only, and filler-only inputs return empty without invoking backend.
-        let failing = StubBackend::with_response(Err("should not run".into()));
+        let failing = StubBackend::with_response(Err("should not run".into()), Duration::ZERO);
         for empty_input in ["", "   ", "Uh, um."] {
             let raw = RawTranscript::from_text(empty_input);
             assert_eq!(failing.try_clean_transcript(&raw), Ok(String::new()));
@@ -458,8 +479,7 @@ mod tests {
     // STT chunks, phrases the output must contain, phrases it must not.
     type EvalCase<'a> = (&'a [&'a str], &'a [&'a str], &'a [&'a str]);
 
-    // Each case: STT chunks, phrases the output must contain (case-insensitive), phrases it must
-    // not. At most 8.5% of spoken words may be dropped.
+    // At most 8.5% of spoken words may be dropped.
     #[test]
     #[ignore = "loads the bundled LLM; run with --ignored --nocapture"]
     fn clean_prompt_eval() {

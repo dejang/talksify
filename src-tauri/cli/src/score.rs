@@ -86,6 +86,36 @@ impl fmt::Display for ErrorRate {
     }
 }
 
+/// Splits text into words, punctuation marks and line breaks.
+pub(crate) fn tokenize(text: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let mut chars = text.char_indices().peekable();
+    while let Some((start, ch)) = chars.next() {
+        if ch == '\n' {
+            tokens.push(&text[start..=start]);
+        } else if ch.is_alphanumeric() {
+            let mut end = start + ch.len_utf8();
+            while let Some(&(index, next)) = chars.peek() {
+                let alphanumeric = next.is_alphanumeric();
+                let connector = matches!(next, '\'' | '’' | '-')
+                    && chars
+                        .clone()
+                        .nth(1)
+                        .is_some_and(|(_, c)| c.is_alphanumeric());
+                if !alphanumeric && !connector {
+                    break;
+                }
+                chars.next();
+                end = index + next.len_utf8();
+            }
+            tokens.push(&text[start..end]);
+        } else if !ch.is_whitespace() {
+            tokens.push(&text[start..start + ch.len_utf8()]);
+        }
+    }
+    tokens
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Errors {
     pub(crate) case: usize,
@@ -95,36 +125,6 @@ pub(crate) struct Errors {
 }
 
 impl Errors {
-    /// Splits text into words, punctuation marks and line breaks.
-    pub(crate) fn tokenize(text: &str) -> Vec<&str> {
-        let mut tokens = Vec::new();
-        let mut chars = text.char_indices().peekable();
-        while let Some((start, ch)) = chars.next() {
-            if ch == '\n' {
-                tokens.push(&text[start..=start]);
-            } else if ch.is_alphanumeric() {
-                let mut end = start + ch.len_utf8();
-                while let Some(&(index, next)) = chars.peek() {
-                    let alphanumeric = next.is_alphanumeric();
-                    let connector = matches!(next, '\'' | '’' | '-')
-                        && chars
-                            .clone()
-                            .nth(1)
-                            .is_some_and(|(_, c)| c.is_alphanumeric());
-                    if !alphanumeric && !connector {
-                        break;
-                    }
-                    chars.next();
-                    end = index + next.len_utf8();
-                }
-                tokens.push(&text[start..end]);
-            } else if !ch.is_whitespace() {
-                tokens.push(&text[start..start + ch.len_utf8()]);
-            }
-        }
-        tokens
-    }
-
     /// Token-level edit distance, classified along one deterministic cheapest path.
     pub(crate) fn between(expected: &[&str], actual: &[&str]) -> Self {
         let mut errors = Self::default();
@@ -209,7 +209,7 @@ mod tests {
             ),
         ];
         for &(input, expected) in cases {
-            assert_eq!(Errors::tokenize(input), expected, "{input:?}");
+            assert_eq!(tokenize(input), expected, "{input:?}");
         }
     }
 
@@ -223,8 +223,8 @@ mod tests {
             ("List:", "List."),
             ("one\ntwo", "one two"),
         ] {
-            let expected = Errors::tokenize(expected);
-            let actual = Errors::tokenize(actual);
+            let expected = tokenize(expected);
+            let actual = tokenize(actual);
             assert_eq!(Errors::between(&expected, &actual).total(), 1);
             assert_eq!(Errors::between(&actual, &expected).total(), 1);
             assert_eq!(Errors::between(&expected, &expected).total(), 0);
@@ -257,7 +257,7 @@ mod tests {
             ("a A a", "A , a A", [0, 1, 0, 2]),
         ];
         for (expected, actual, counts) in classification_cases {
-            let errors = Errors::between(&Errors::tokenize(expected), &Errors::tokenize(actual));
+            let errors = Errors::between(&tokenize(expected), &tokenize(actual));
             assert_eq!(
                 [
                     errors.case,

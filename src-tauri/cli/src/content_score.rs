@@ -2,6 +2,39 @@ use std::fmt;
 
 use crate::score::{Edit, ErrorRate};
 
+/// Splits lowercased text into content words.
+/// Drops punctuation and line breaks, strips intra-word apostrophes, and splits hyphens.
+pub(crate) fn tokenize(text: &str) -> Vec<String> {
+    let lower = text.to_lowercase();
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut chars = lower.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if is_content_char(ch) {
+            current.push(ch);
+        } else if is_apostrophe(ch)
+            && !current.is_empty()
+            && chars.peek().copied().is_some_and(is_content_char)
+        {
+            // Omit intra-word apostrophe variants so contractions compare equal.
+        } else if !current.is_empty() {
+            words.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
+}
+
+fn is_apostrophe(ch: char) -> bool {
+    matches!(ch, '\'' | '’' | 'ʼ')
+}
+
+fn is_content_char(ch: char) -> bool {
+    ch.is_alphanumeric() && !is_apostrophe(ch)
+}
+
 /// Normalized word-only edit distance classified into substitutions, deletions, and insertions.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct ContentErrors {
@@ -11,31 +44,6 @@ pub(crate) struct ContentErrors {
 }
 
 impl ContentErrors {
-    /// Splits lowercased text into content words.
-    /// Drops punctuation and line breaks, strips intra-word apostrophes, and splits hyphens.
-    pub(crate) fn tokenize(text: &str) -> Vec<String> {
-        let lower = text.to_lowercase();
-        let mut words = Vec::new();
-        let mut current = String::new();
-        let mut chars = lower.chars().peekable();
-        while let Some(ch) = chars.next() {
-            if Self::is_content_char(ch) {
-                current.push(ch);
-            } else if Self::is_apostrophe(ch)
-                && !current.is_empty()
-                && chars.peek().copied().is_some_and(Self::is_content_char)
-            {
-                // Omit intra-word apostrophe variants so contractions compare equal.
-            } else if !current.is_empty() {
-                words.push(std::mem::take(&mut current));
-            }
-        }
-        if !current.is_empty() {
-            words.push(current);
-        }
-        words
-    }
-
     /// Word-level edit distance classified into substitutions, deletions, and insertions.
     pub(crate) fn between(expected: &[String], actual: &[String]) -> Self {
         let mut errors = Self::default();
@@ -62,14 +70,6 @@ impl ContentErrors {
         self.deletions += other.deletions;
         self.insertions += other.insertions;
     }
-
-    fn is_apostrophe(ch: char) -> bool {
-        matches!(ch, '\'' | '’' | 'ʼ')
-    }
-
-    fn is_content_char(ch: char) -> bool {
-        ch.is_alphanumeric() && !Self::is_apostrophe(ch)
-    }
 }
 
 impl fmt::Display for ContentErrors {
@@ -85,7 +85,7 @@ impl fmt::Display for ContentErrors {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::score::Errors;
+    use crate::score::{self, Errors};
 
     #[test]
     fn normalizes_content_tokens_without_changing_exact_scoring() {
@@ -101,7 +101,7 @@ mod tests {
             ("\u{02bc}word\u{02bc} \u{02bc}", &["word"]),
         ];
         for &(input, expected) in token_cases {
-            assert_eq!(ContentErrors::tokenize(input), expected, "{input:?}");
+            assert_eq!(tokenize(input), expected, "{input:?}");
         }
 
         let equivalent_pairs = [
@@ -124,10 +124,7 @@ mod tests {
             ("real-time speech-to-text", "real time speech to text"),
         ];
         for (expected, actual) in equivalent_pairs {
-            let result = ContentErrors::between(
-                &ContentErrors::tokenize(expected),
-                &ContentErrors::tokenize(actual),
-            );
+            let result = ContentErrors::between(&tokenize(expected), &tokenize(actual));
             assert_eq!(
                 result,
                 ContentErrors::default(),
@@ -164,7 +161,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                Errors::between(&Errors::tokenize(expected), &Errors::tokenize(actual)),
+                Errors::between(&score::tokenize(expected), &score::tokenize(actual)),
                 want,
                 "{expected:?} vs {actual:?}"
             );
@@ -196,19 +193,14 @@ mod tests {
                 deletions,
                 insertions,
             };
-            let got = ContentErrors::between(
-                &ContentErrors::tokenize(expected),
-                &ContentErrors::tokenize(actual),
-            );
+            let got = ContentErrors::between(&tokenize(expected), &tokenize(actual));
             assert_eq!(got, want, "{expected:?} vs {actual:?}");
             assert_eq!(got.total(), substitutions + deletions + insertions);
         }
 
+        assert!((ContentErrors::between(&[], &[]).rate(0).percentage() - 0.0).abs() < f64::EPSILON);
         assert!(
-            (ContentErrors::between(&[], &[]).rate(0).percentage() - 0.0).abs() < f64::EPSILON
-        );
-        assert!(
-            (ContentErrors::between(&[], &ContentErrors::tokenize("extra"))
+            (ContentErrors::between(&[], &tokenize("extra"))
                 .rate(0)
                 .percentage()
                 - 100.0)

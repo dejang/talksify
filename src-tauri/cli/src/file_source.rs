@@ -6,6 +6,29 @@ use std::time::{Duration, Instant};
 
 use talksify_core::{AudioError, AudioSource, HeapCons, InputFormat, Transcriber};
 
+/// Validates the WAV header and returns its native stream format without decoding samples.
+pub(crate) fn inspect_wav_format(path: &Path) -> Result<InputFormat, String> {
+    hound::WavReader::open(path)
+        .and_then(|reader| format_from_wav_spec(reader.spec()))
+        .map_err(|error| wav_read_error(path, &error))
+}
+
+fn wav_read_error(path: &Path, error: &hound::Error) -> String {
+    format!("cannot read {}: {error}", path.display())
+}
+
+fn format_from_wav_spec(spec: hound::WavSpec) -> Result<InputFormat, hound::Error> {
+    if spec.sample_rate == 0 || spec.channels == 0 {
+        return Err(hound::Error::FormatError(
+            "invalid WAV sample rate or channels",
+        ));
+    }
+    Ok(InputFormat {
+        sample_rate: spec.sample_rate,
+        channels: spec.channels,
+    })
+}
+
 /// Decoded interleaved f32 WAV samples and their native stream format.
 pub(crate) struct WavAudio {
     samples: Vec<f32>,
@@ -13,22 +36,15 @@ pub(crate) struct WavAudio {
 }
 
 impl WavAudio {
-    /// Validates the WAV header and returns its native stream format without decoding samples.
-    pub(crate) fn inspect_format(path: &Path) -> Result<InputFormat, String> {
-        hound::WavReader::open(path)
-            .and_then(|reader| Self::format_from_spec(reader.spec()))
-            .map_err(|error| Self::read_error(path, &error))
-    }
-
     /// Reads a whole WAV file into interleaved f32 samples in -1..=1.
     fn read(path: &Path) -> Result<Self, String> {
-        Self::decode(path).map_err(|error| Self::read_error(path, &error))
+        Self::decode(path).map_err(|error| wav_read_error(path, &error))
     }
 
     fn decode(path: &Path) -> Result<Self, hound::Error> {
         let mut reader = hound::WavReader::open(path)?;
         let spec = reader.spec();
-        let format = Self::format_from_spec(spec)?;
+        let format = format_from_wav_spec(spec)?;
         let samples: Vec<f32> = match spec.sample_format {
             hound::SampleFormat::Int => {
                 let scale = 2.0_f32.powi(i32::from(spec.bits_per_sample) - 1);
@@ -46,47 +62,20 @@ impl WavAudio {
         Ok(Self { samples, format })
     }
 
-    fn read_error(path: &Path, error: &hound::Error) -> String {
-        format!("cannot read {}: {error}", path.display())
-    }
-
     /// Computes total playback duration in seconds for this audio clip.
     fn duration_secs(&self) -> f64 {
-        Self::duration_for(self.samples.len(), self.format)
-    }
-
-    /// Computes playback duration in seconds for interleaved samples in `format`.
-    fn duration_for(sample_count: usize, format: InputFormat) -> f64 {
-        let frames = sample_count.div_ceil(usize::from(format.channels));
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "frame counts fit f64 for practical WAV files"
-        )]
-        let duration = frames as f64 / f64::from(format.sample_rate);
-        duration
-    }
-
-    fn format_from_spec(spec: hound::WavSpec) -> Result<InputFormat, hound::Error> {
-        if spec.sample_rate == 0 || spec.channels == 0 {
-            return Err(hound::Error::FormatError(
-                "invalid WAV sample rate or channels",
-            ));
-        }
-        Ok(InputFormat {
-            sample_rate: spec.sample_rate,
-            channels: spec.channels,
-        })
+        self.format.duration_secs(self.samples.len())
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-enum PlaybackOutcome {
+pub(crate) enum PlaybackOutcome {
     Pending,
     Finished(f64),
     Failed(String),
 }
 
-/// Shared completion state between [`FileSource`] playback and [`FileSource::play_into`].
+/// Shared completion state between [`FileSource`] playback and [`PlaybackState::play`].
 pub(crate) struct PlaybackState {
     outcome: Mutex<PlaybackOutcome>,
 }
@@ -112,11 +101,41 @@ impl PlaybackState {
             PlaybackOutcome::Failed(error);
     }
 
-    fn outcome(&self) -> PlaybackOutcome {
+    pub(crate) fn outcome(&self) -> PlaybackOutcome {
         self.outcome
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    /// Starts capture and waits until playback finishes, returning the clip's duration in seconds.
+    pub(crate) fn play(&self, transcriber: &mut Transcriber<FileSource>) -> Result<f64, String> {
+        transcriber
+            .start_transcribing(None)
+            .map_err(|e| e.to_string())?;
+        loop {
+            match self.outcome() {
+                PlaybackOutcome::Finished(duration_secs) => return Ok(duration_secs),
+                PlaybackOutcome::Failed(error) => {
+                    if transcriber.is_transcribing() {
+                        let _ = transcriber.stop_transcribing();
+                    }
+                    return Err(error);
+                }
+                PlaybackOutcome::Pending => {
+                    if !transcriber.is_transcribing() {
+                        return match self.outcome() {
+                            PlaybackOutcome::Finished(duration_secs) => Ok(duration_secs),
+                            PlaybackOutcome::Failed(error) => Err(error),
+                            PlaybackOutcome::Pending => {
+                                Err("audio capture stopped before the end of the file".into())
+                            }
+                        };
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        }
     }
 }
 
@@ -138,44 +157,11 @@ impl FileSource {
             thread: None,
         }
     }
-
-    /// Starts capture and waits until playback finishes, returning the clip's duration in seconds.
-    pub(crate) fn play_into(
-        transcriber: &mut Transcriber<Self>,
-        playback: &PlaybackState,
-    ) -> Result<f64, String> {
-        transcriber
-            .start_transcribing(None)
-            .map_err(|e| e.to_string())?;
-        loop {
-            match playback.outcome() {
-                PlaybackOutcome::Finished(duration_secs) => return Ok(duration_secs),
-                PlaybackOutcome::Failed(error) => {
-                    if transcriber.is_transcribing() {
-                        let _ = transcriber.stop_transcribing();
-                    }
-                    return Err(error);
-                }
-                PlaybackOutcome::Pending => {
-                    if !transcriber.is_transcribing() {
-                        return match playback.outcome() {
-                            PlaybackOutcome::Finished(duration_secs) => Ok(duration_secs),
-                            PlaybackOutcome::Failed(error) => Err(error),
-                            PlaybackOutcome::Pending => {
-                                Err("audio capture stopped before the end of the file".into())
-                            }
-                        };
-                    }
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-            }
-        }
-    }
 }
 
 impl AudioSource for FileSource {
     fn start_capture(&mut self) -> Result<HeapCons<f32>, AudioError> {
-        let format = WavAudio::inspect_format(&self.path).map_err(|message| {
+        let format = inspect_wav_format(&self.path).map_err(|message| {
             self.playback.fail(message.clone());
             AudioError::StreamError(message)
         })?;
@@ -205,11 +191,8 @@ impl AudioSource for FileSource {
                     let mut dropped = 0;
                     'playback: for block in audio.samples.chunks(block_samples) {
                         end_sample += block.len();
-                        let deadline = start
-                            + Duration::from_secs_f64(WavAudio::duration_for(
-                                end_sample,
-                                audio.format,
-                            ));
+                        let deadline =
+                            start + Duration::from_secs_f64(audio.format.duration_secs(end_sample));
                         loop {
                             if stop.load(Ordering::Acquire) {
                                 break 'playback;
@@ -240,11 +223,13 @@ impl AudioSource for FileSource {
 
     fn stop_capture(&mut self) -> Result<(), AudioError> {
         self.stop.store(true, Ordering::Release);
-        if let Some(thread) = self.thread.take() {
-            thread.thread().unpark();
-            let _ = thread.join();
-        }
-        Ok(())
+        let Some(thread) = self.thread.take() else {
+            return Ok(());
+        };
+        thread.thread().unpark();
+        thread
+            .join()
+            .map_err(|_| AudioError::StreamError("file-source playback thread panicked".into()))
     }
 
     fn input_format(&self) -> Option<InputFormat> {
@@ -384,29 +369,14 @@ mod tests {
 
         // Missing WAV fails capture and records the failure outcome.
         let missing_playback = Arc::new(PlaybackState::new());
-        let mut missing = FileSource::new(dir.path().join("missing.wav"), Arc::clone(&missing_playback));
+        let mut missing = FileSource::new(
+            dir.path().join("missing.wav"),
+            Arc::clone(&missing_playback),
+        );
         assert!(missing.start_capture().is_err());
         assert!(matches!(
             missing_playback.outcome(),
             PlaybackOutcome::Failed(_)
         ));
-    }
-
-    #[test]
-    fn computes_wav_duration_from_sample_count_and_format() {
-        let stereo_16k = InputFormat {
-            sample_rate: 16_000,
-            channels: 2,
-        };
-        for (samples, expected) in [
-            (32_000, 1.0),
-            (32_001, 16_001.0 / 16_000.0),
-            (0, 0.0),
-        ] {
-            assert!(
-                (WavAudio::duration_for(samples, stereo_16k) - expected).abs() < 1e-9,
-                "samples={samples}"
-            );
-        }
     }
 }

@@ -185,7 +185,29 @@ impl TextFormatter {
             return line.to_string();
         }
         let (list, trailing) = split_sentence(after);
-        let items = split_items(list.trim().trim_end_matches('.'));
+        // Split "a, b, and c" or "a, b and c" into items; empty unless joined by "and" or "or".
+        let mut items: Vec<&str> = list
+            .trim()
+            .trim_end_matches('.')
+            .split(", ")
+            .map(str::trim)
+            .collect();
+        if let Some(final_part) = items.pop() {
+            if let Some(tail) = final_part
+                .strip_prefix("and ")
+                .or_else(|| final_part.strip_prefix("or "))
+            {
+                items.push(tail);
+            } else if let Some((a, b)) = final_part
+                .rsplit_once(" and ")
+                .or_else(|| final_part.rsplit_once(" or "))
+            {
+                items.push(a);
+                items.push(b);
+            } else {
+                items.clear();
+            }
+        }
         let announced = lead_in.trim_end().to_lowercase().ends_with("following");
         if !self.is_bullet_list(&items, announced) {
             return line.to_string();
@@ -215,7 +237,9 @@ impl TextFormatter {
         }
         let words: Vec<usize> = items.iter().map(|i| i.split_whitespace().count()).collect();
         let longest_rest = words[1..].iter().copied().max().unwrap_or(0);
-        words.iter().all(|&w| (1..=self.max_bullet_words).contains(&w))
+        words
+            .iter()
+            .all(|&w| (1..=self.max_bullet_words).contains(&w))
             && words[0] <= longest_rest + 2
     }
 }
@@ -238,25 +262,6 @@ fn split_sentence(text: &str) -> (&str, &str) {
     (text, "")
 }
 
-/// Splits "a, b, and c" or "a, b and c" into items; empty unless joined by "and" or "or".
-fn split_items(list: &str) -> Vec<&str> {
-    let mut items: Vec<&str> = list.split(", ").map(str::trim).collect();
-    let Some(final_part) = items.pop() else {
-        return items;
-    };
-    if let Some(tail) = final_part.strip_prefix("and ").or_else(|| final_part.strip_prefix("or ")) {
-        items.push(tail);
-    } else if let Some((a, b)) =
-        final_part.rsplit_once(" and ").or_else(|| final_part.rsplit_once(" or "))
-    {
-        items.push(a);
-        items.push(b);
-    } else {
-        items.clear();
-    }
-    items
-}
-
 /// Removes a word or phrase said twice in a row: "this is this is" becomes "this is".
 /// Punctuation inside a repeat blocks it; trailing punctuation on the second copy stays.
 pub(crate) fn remove_repeats(text: &str) -> String {
@@ -271,10 +276,28 @@ fn remove_line_repeats(line: &str) -> String {
     let mut i = 0;
     while i < words.len() {
         let longest = (words.len() - i) / 2;
-        let Some(span) = (1..=longest)
-            .rev()
-            .find(|&n| is_repeat(&words[i..i + n], &words[i + n..i + 2 * n]))
-        else {
+        let Some(span) = (1..=longest).rev().find(|&n| {
+            let first = &words[i..i + n];
+            let second = &words[i + n..i + 2 * n];
+            first
+                .iter()
+                .zip(second.iter())
+                .enumerate()
+                .all(|(k, (a, b))| {
+                    let b = if k + 1 == first.len() {
+                        b.trim_end_matches([',', '.', ';', ':', '!', '?'])
+                    } else {
+                        b.as_str()
+                    };
+                    if a.contains([',', '.', ';', ':', '!', '?'])
+                        || b.contains([',', '.', ';', ':', '!', '?'])
+                        || !a.chars().any(char::is_alphabetic)
+                    {
+                        return false;
+                    }
+                    a == b || (k == 0 && a.starts_with(char::is_uppercase) && a.to_lowercase() == b)
+                })
+        }) else {
             i += 1;
             continue;
         };
@@ -287,28 +310,6 @@ fn remove_line_repeats(line: &str) -> String {
         }
     }
     words.join(" ")
-}
-
-fn is_repeat(first: &[String], second: &[String]) -> bool {
-    for (k, (a, b)) in first.iter().zip(second.iter()).enumerate() {
-        let b = if k + 1 == first.len() {
-            b.trim_end_matches([',', '.', ';', ':', '!', '?'])
-        } else {
-            b.as_str()
-        };
-        if a.contains([',', '.', ';', ':', '!', '?'])
-            || b.contains([',', '.', ';', ':', '!', '?'])
-            || !a.chars().any(char::is_alphabetic)
-        {
-            return false;
-        }
-        let same =
-            a == b || (k == 0 && a.starts_with(char::is_uppercase) && a.to_lowercase() == b);
-        if !same {
-            return false;
-        }
-    }
-    true
 }
 
 /// Appends `text` to `out` with its first letter upper-cased.
@@ -343,9 +344,18 @@ mod tests {
             f.strip_fillers("For instance, um it needs to remove uh uh things that uh it outputs."),
             "For instance, it needs to remove things that it outputs."
         );
-        assert_eq!(f.strip_fillers("So, um, I guess we could go."), "So I guess we could go.");
-        assert_eq!(f.strip_fillers("We'll see, um. Then we go."), "We'll see. Then we go.");
-        assert_eq!(f.strip_fillers("Umbrella and uh-huh stay."), "Umbrella and uh-huh stay.");
+        assert_eq!(
+            f.strip_fillers("So, um, I guess we could go."),
+            "So I guess we could go."
+        );
+        assert_eq!(
+            f.strip_fillers("We'll see, um. Then we go."),
+            "We'll see. Then we go."
+        );
+        assert_eq!(
+            f.strip_fillers("Umbrella and uh-huh stay."),
+            "Umbrella and uh-huh stay."
+        );
         assert_eq!(f.strip_fillers("Uh."), "");
     }
 
@@ -361,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn collapses_repeated_words_and_phrases() {
+    fn removes_back_to_back_repeats_and_preserves_valid_text() {
         for (text, want) in [
             (
                 "Like this would be this is this is stupid, we should just give it the prompt.",
@@ -387,14 +397,14 @@ mod tests {
                 "I think I I actually want the false starts to be cleaned up.",
                 "I think I actually want the false starts to be cleaned up.",
             ),
-            ("I don't know what this is this is.", "I don't know what this is."),
+            (
+                "I don't know what this is this is.",
+                "I don't know what this is.",
+            ),
         ] {
             assert_eq!(remove_repeats(text), want);
         }
-    }
 
-    #[test]
-    fn preserves_single_letter_symbols_before_matching_words() {
         // An isolated letter can be a symbol or initial, not necessarily a stutter.
         for letter in 'a'..='z' {
             for symbol in [letter, letter.to_ascii_uppercase()] {
@@ -402,10 +412,7 @@ mod tests {
                 assert_eq!(remove_repeats(&text), text);
             }
         }
-    }
 
-    #[test]
-    fn keeps_text_without_back_to_back_repeats() {
         for text in [
             "This is what it is.",
             "I think the API is fine. The API works.",
@@ -420,79 +427,61 @@ mod tests {
     }
 
     #[test]
-    fn numbers_spoken_counting() {
+    fn formats_spoken_lists_and_leaves_non_lists_unchanged() {
         let f = TextFormatter::new();
-        assert_eq!(
-            f.format_lists("We're saying one, we do that, two, we do that, three, we do that."),
-            "We're saying:\n1. We do that.\n2. We do that.\n3. We do that."
-        );
-        assert_eq!(
-            f.format_lists(
+        for (input, expected) in [
+            // Spoken counting -> numbered lists
+            (
+                "We're saying one, we do that, two, we do that, three, we do that.",
+                "We're saying:\n1. We do that.\n2. We do that.\n3. We do that.",
+            ),
+            (
                 "So the plan is. One, we refactor the parser. Two, we add more tests. \
-                 Three, we ship it on Friday. Then we rest."
+                 Three, we ship it on Friday. Then we rest.",
+                "So the plan is:\n1. We refactor the parser.\n2. We add more tests.\n\
+                 3. We ship it on Friday.\nThen we rest.",
             ),
-            "So the plan is:\n1. We refactor the parser.\n2. We add more tests.\n\
-             3. We ship it on Friday.\nThen we rest."
-        );
-        assert_eq!(
-            f.format_lists("First, open the settings. Second, turn on sync. And third, restart the app."),
-            "1. Open the settings.\n2. Turn on sync.\n3. Restart the app."
-        );
-        assert_eq!(
-            f.format_lists(
-                "So the plan is: 1, we refactor the parser. 2, we add more tests. 3. We ship it on Friday."
+            (
+                "First, open the settings. Second, turn on sync. And third, restart the app.",
+                "1. Open the settings.\n2. Turn on sync.\n3. Restart the app.",
             ),
-            "So the plan is:\n1. We refactor the parser.\n2. We add more tests.\n3. We ship it on Friday."
-        );
-    }
-
-    #[test]
-    fn leaves_numbers_that_are_not_counting() {
-        let f = TextFormatter::new();
-        for text in [
-            "I have one, maybe two, cats.",
-            "One, I don't like it.",
-            "The plan is:\n1. Refactor the parser.\n2. Add more tests.",
-        ] {
-            assert_eq!(f.format_lists(text), text);
-        }
-    }
-
-    #[test]
-    fn bullets_short_colon_lists() {
-        let f = TextFormatter::new();
-        assert_eq!(
-            f.format_lists("There are a few things we need to buy: milk, eggs, bread, and coffee."),
-            "There are a few things we need to buy:\n- Milk\n- Eggs\n- Bread\n- Coffee"
-        );
-        assert_eq!(
-            f.format_lists("For the party we still need: chairs, plates, a speaker and some ice. Then we start."),
-            "For the party we still need:\n- Chairs\n- Plates\n- A speaker\n- Some ice\nThen we start."
-        );
-        assert_eq!(
-            f.format_lists(
+            (
+                "So the plan is: 1, we refactor the parser. 2, we add more tests. 3. We ship it on Friday.",
+                "So the plan is:\n1. We refactor the parser.\n2. We add more tests.\n3. We ship it on Friday.",
+            ),
+            // Short colon lists -> bullets
+            (
+                "There are a few things we need to buy: milk, eggs, bread, and coffee.",
+                "There are a few things we need to buy:\n- Milk\n- Eggs\n- Bread\n- Coffee",
+            ),
+            (
+                "For the party we still need: chairs, plates, a speaker and some ice. Then we start.",
+                "For the party we still need:\n- Chairs\n- Plates\n- A speaker\n- Some ice\nThen we start.",
+            ),
+            (
                 "Interesting. Maybe we can now also fix the following: move the overlay to the \
                  bottom of the screen, make the overlay show a volumeter instead of the listening \
                  blinking thing, and hopefully the overlay doesn't really interact with the rest of \
-                 the page."
+                 the page.",
+                "Interesting. Maybe we can now also fix the following:\n\
+                 - Move the overlay to the bottom of the screen\n\
+                 - Make the overlay show a volumeter instead of the listening blinking thing\n\
+                 - Hopefully the overlay doesn't really interact with the rest of the page",
             ),
-            "Interesting. Maybe we can now also fix the following:\n\
-             - Move the overlay to the bottom of the screen\n\
-             - Make the overlay show a volumeter instead of the listening blinking thing\n\
-             - Hopefully the overlay doesn't really interact with the rest of the page"
-        );
-    }
+        ] {
+            assert_eq!(f.format_lists(input), expected, "{input}");
+        }
 
-    #[test]
-    fn leaves_colon_sentences_that_are_not_lists() {
-        let f = TextFormatter::new();
-        for text in [
+        for unchanged in [
+            "I have one, maybe two, cats.",
+            "One, I don't like it.",
+            "The plan is:\n1. Refactor the parser.\n2. Add more tests.",
             "The problem is this: the build is slow, flaky, and expensive.",
             "Here's what I think: we should wait until the data comes in.",
             "We need: milk and eggs.",
             "For the party we still need:\n- Chairs\n- Plates\n- Some ice",
         ] {
-            assert_eq!(f.format_lists(text), text);
+            assert_eq!(f.format_lists(unchanged), unchanged, "{unchanged}");
         }
     }
 }

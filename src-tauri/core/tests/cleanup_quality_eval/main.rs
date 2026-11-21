@@ -8,8 +8,8 @@ mod eval {
 
     use talksify_core::TextCleaner;
 
-    use crate::cases::QualitySuite;
-    use crate::prose_matcher::ProseMatcher;
+    use crate::cases::suite::QualitySuite;
+    use crate::prose_matcher::matcher::ProseMatcher;
 
     trait EvalCleaner {
         fn try_clean(&self, raw: &str) -> Result<String, String>;

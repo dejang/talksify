@@ -3,8 +3,7 @@ mod event_handler;
 mod inject;
 mod updater;
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
@@ -18,18 +17,14 @@ use inject::TextInjector;
 use talksify_core::Transcriber;
 use updater::Updater;
 
-fn is_recording(state: &AppState) -> bool {
-    state.transcriber.lock().is_ok_and(|t| t.is_transcribing())
-}
-
 fn toggle_dictation(app: &tauri::AppHandle) {
     let state: tauri::State<'_, AppState> = app.state();
-    if is_recording(state.inner()) {
+    if state.is_recording() {
         log::info!("[hotkey] stop dictation");
-        let _ = event_handler::stop_dictation(app, state.inner());
+        let _ = state.stop_dictation(app);
     } else {
         log::info!("[hotkey] start dictation");
-        let _ = event_handler::start_dictation(app, state.inner());
+        let _ = state.start_dictation(app);
     }
 }
 
@@ -38,7 +33,7 @@ fn toggle_dictation(app: &tauri::AppHandle) {
 fn toggle_hotkey(app: &tauri::AppHandle, hotkey: &str) -> Result<&'static str, String> {
     let shortcuts = app.global_shortcut();
     if shortcuts.is_registered(hotkey) {
-        if is_recording(app.state::<AppState>().inner()) {
+        if app.state::<AppState>().is_recording() {
             toggle_dictation(app);
         }
         shortcuts.unregister(hotkey).map_err(|e| e.to_string())?;
@@ -100,13 +95,9 @@ fn build_tray(app: &tauri::App, hotkey: String) -> tauri::Result<Arc<Updater>> {
                 let _ = autostart_item.set_checked(app.autolaunch().is_enabled().unwrap_or(false));
             }
             "recordings" => {
-                let state = app.state::<AppState>();
-                let save = !state.save_recordings.fetch_xor(true, Ordering::Relaxed);
+                let save = app.state::<AppState>().toggle_save_recordings();
                 let _ = recordings_item.set_checked(save);
-                log::info!(
-                    "[tray] save recordings {}",
-                    if save { "on" } else { "off" }
-                );
+                log::info!("[tray] save recordings {}", if save { "on" } else { "off" });
             }
             "update" => menu_updater.handle_menu_click(app.clone()),
             "quit" => app.exit(0),
@@ -155,26 +146,23 @@ pub fn run() {
             let on_level = Arc::new(move |level: f32| {
                 let _ = level_handle.emit("audio-level", level);
             });
-            let transcriber =
-                Transcriber::with_default(&config.model_dir, config.audio_device.clone(), on_level)
-                    .map_err(|e| format!("transcriber init: {e}"))?;
+            let transcriber = Transcriber::with_default(
+                config.model_dir(),
+                config.audio_device().map(str::to_owned),
+                on_level,
+            )
+            .map_err(|e| format!("transcriber init: {e}"))?;
 
-            let app_state = AppState {
-                transcriber: Mutex::new(transcriber),
-                injector,
-                state: Mutex::new(event_handler::DictationState::Idle),
-                overlay_margin: 24.0,
-                save_recordings: AtomicBool::new(false),
-            };
-            app.manage(app_state);
+            app.manage(AppState::new(transcriber, injector));
 
-            log::info!("registering hotkey: {}", config.hotkey);
+            log::info!("registering hotkey: {}", config.hotkey());
             app.global_shortcut()
-                .register(config.hotkey.as_str())
+                .register(config.hotkey())
                 .map_err(|e| format!("hotkey register: {e}"))?;
             log::info!("hotkey registered ok");
 
-            let updater = build_tray(app, config.hotkey).map_err(|e| format!("tray: {e}"))?;
+            let updater =
+                build_tray(app, config.hotkey().to_owned()).map_err(|e| format!("tray: {e}"))?;
             updater.spawn_startup_check(app.handle().clone());
 
             Ok(())

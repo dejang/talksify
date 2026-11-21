@@ -31,6 +31,15 @@ impl SampleRunner<RawEntry> for TextCleaner {
     }
 }
 
+pub(crate) fn run_replay(dump_path: &Path, models: &Path) -> Result<ExitCode, String> {
+    let dump = RawDump::read(dump_path)?;
+    if dump.is_empty() {
+        return Err(format!("no entries in {}", dump_path.display()));
+    }
+    let mut cleaner = TextCleaner::try_new(models)?;
+    Ok(ReplayHarness::new(dump).execute(&mut cleaner))
+}
+
 /// Text-only replay runner over a loaded [`RawDump`] using the shared [`Harness`].
 pub(crate) struct ReplayHarness {
     dump: RawDump,
@@ -43,20 +52,6 @@ impl ReplayHarness {
             dump,
             harness: Harness::default(),
         }
-    }
-
-    pub(crate) fn load(dump_path: &Path) -> Result<Self, String> {
-        let dump = RawDump::read(dump_path)?;
-        if dump.is_empty() {
-            return Err(format!("no entries in {}", dump_path.display()));
-        }
-        Ok(Self::new(dump))
-    }
-
-    pub(crate) fn run(dump_path: &Path, models: &Path) -> Result<ExitCode, String> {
-        let replay = Self::load(dump_path)?;
-        let mut cleaner = TextCleaner::try_new(models)?;
-        Ok(replay.execute(&mut cleaner))
     }
 
     pub(crate) fn execute(mut self, runner: &mut impl SampleRunner<RawEntry>) -> ExitCode {
@@ -134,15 +129,9 @@ mod tests {
                 dir.path().join("missing-models"),
             ),
         ] {
-            assert!(
-                ReplayHarness::run(&dump_path, &models_dir).is_err(),
-                "{label}"
-            );
+            assert!(run_replay(&dump_path, &models_dir).is_err(), "{label}");
         }
-        assert_eq!(
-            ReplayHarness::run(&valid_path, dir.path()),
-            Ok(ExitCode::SUCCESS)
-        );
+        assert_eq!(run_replay(&valid_path, dir.path()), Ok(ExitCode::SUCCESS));
     }
 
     #[test]
@@ -165,7 +154,11 @@ mod tests {
         };
         for (label, entries, expected) in [
             ("all succeed", vec![good.clone()], ExitCode::SUCCESS),
-            ("mixed failure", vec![good, failed.clone()], ExitCode::FAILURE),
+            (
+                "mixed failure",
+                vec![good, failed.clone()],
+                ExitCode::FAILURE,
+            ),
             ("all fail", vec![failed], ExitCode::FAILURE),
         ] {
             let mut dump = RawDump::new();

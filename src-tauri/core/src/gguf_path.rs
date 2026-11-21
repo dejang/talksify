@@ -1,49 +1,42 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// A validated local GGUF model directory and filename safe to pass to `mistralrs`.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct LocalGguf {
-    pub(crate) dir: String,
-    pub(crate) file: String,
+    dir: String,
+    file: String,
 }
 
 impl LocalGguf {
     /// Selects and resolves the local GGUF model under `model_dir/qwen-0.6b`.
     pub(crate) fn locate(model_dir: &Path) -> Result<Option<Self>, String> {
         let llm_dir = model_dir.join("qwen-0.6b");
-        let Some(gguf_path) = Self::find_in_dir(&llm_dir)? else {
-            return Ok(None);
-        };
-        Self::resolve(&gguf_path).map(Some)
-    }
-
-    /// Finds the deterministically first `.gguf` file in `dir`.
-    fn find_in_dir(dir: &Path) -> Result<Option<PathBuf>, String> {
-        match std::fs::metadata(dir) {
+        match std::fs::metadata(&llm_dir) {
             Ok(meta) if meta.is_dir() => {}
             Ok(_) => {
                 return Err(format!(
                     "model directory {} is not a directory",
-                    dir.display()
+                    llm_dir.display()
                 ));
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => {
                 return Err(format!(
                     "cannot inspect model directory {}: {error}",
-                    dir.display()
+                    llm_dir.display()
                 ));
             }
         }
 
-        let entries = std::fs::read_dir(dir)
-            .map_err(|error| format!("cannot read model directory {}: {error}", dir.display()))?;
+        let entries = std::fs::read_dir(&llm_dir).map_err(|error| {
+            format!("cannot read model directory {}: {error}", llm_dir.display())
+        })?;
         let mut candidates = Vec::new();
         for entry in entries {
             let entry = entry.map_err(|error| {
                 format!(
                     "cannot read entry in model directory {}: {error}",
-                    dir.display()
+                    llm_dir.display()
                 )
             })?;
             let path = entry.path();
@@ -53,17 +46,25 @@ impl LocalGguf {
         }
         candidates.sort();
 
-        let Some(chosen) = candidates.first().cloned() else {
+        let Some(chosen) = candidates.first() else {
             return Ok(None);
         };
         if candidates.len() > 1 {
             log::warn!(
                 "multiple .gguf models in {}; selecting {}",
-                dir.display(),
+                llm_dir.display(),
                 chosen.display()
             );
         }
-        Ok(Some(chosen))
+        Self::resolve(chosen).map(Some)
+    }
+
+    pub(crate) fn dir(&self) -> &str {
+        &self.dir
+    }
+
+    pub(crate) fn file(&self) -> &str {
+        &self.file
     }
 
     /// Resolves a local GGUF path without lossy UTF-8 conversion or remote lookup fallback.
@@ -107,29 +108,11 @@ impl LocalGguf {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::PathBuf;
 
     use tempfile::TempDir;
 
     use super::*;
-
-    fn write_model(root: &Path, models_rel: &str, file: &str) -> (PathBuf, LocalGguf) {
-        let models = root.join(models_rel);
-        let llm_dir = models.join("qwen-0.6b");
-        fs::create_dir_all(&llm_dir).unwrap();
-        fs::write(llm_dir.join(file), b"gguf").unwrap();
-        let canonical = fs::canonicalize(&llm_dir)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_owned();
-        (
-            models,
-            LocalGguf {
-                dir: canonical,
-                file: file.into(),
-            },
-        )
-    }
 
     #[test]
     fn locate_succeeds_for_valid_and_absent_model_dirs() {
@@ -141,7 +124,15 @@ mod tests {
         let empty_llm = root.path().join("empty-llm");
         fs::create_dir_all(empty_llm.join("qwen-0.6b/00-dir.gguf")).unwrap();
 
-        let (multi_models, multi_expected) = write_model(root.path(), "multi-models", "a-model.gguf");
+        let multi_models = root.path().join("multi-models");
+        let multi_llm = multi_models.join("qwen-0.6b");
+        fs::create_dir_all(&multi_llm).unwrap();
+        fs::write(multi_llm.join("a-model.gguf"), b"gguf").unwrap();
+        let multi_canonical = fs::canonicalize(&multi_llm)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
         fs::create_dir_all(multi_models.join("qwen-0.6b/00-dir.gguf")).unwrap();
         fs::write(multi_models.join("qwen-0.6b/z-model.gguf"), b"gguf").unwrap();
         fs::write(multi_models.join("qwen-0.6b/notes.txt"), b"notes").unwrap();
@@ -154,12 +145,14 @@ mod tests {
             (
                 "deterministic first .gguf",
                 multi_models,
-                Some(multi_expected),
+                Some((multi_canonical, "a-model.gguf".to_owned())),
             ),
         ];
 
         for (label, path, expected) in cases {
-            assert_eq!(LocalGguf::locate(&path), Ok(expected), "{label}");
+            let actual = LocalGguf::locate(&path)
+                .map(|found| found.map(|gguf| (gguf.dir().to_owned(), gguf.file().to_owned())));
+            assert_eq!(actual, Ok(expected), "{label}");
         }
     }
 
@@ -171,11 +164,8 @@ mod tests {
         fs::create_dir(&file_as_llm).unwrap();
         fs::write(file_as_llm.join("qwen-0.6b"), b"data").unwrap();
 
-        let mut cases: Vec<(&str, PathBuf, &str)> = vec![(
-            "qwen-0.6b is a file",
-            file_as_llm,
-            "is not a directory",
-        )];
+        let mut cases: Vec<(&str, PathBuf, &str)> =
+            vec![("qwen-0.6b is a file", file_as_llm, "is not a directory")];
 
         #[cfg(unix)]
         {
@@ -200,8 +190,9 @@ mod tests {
         }
 
         for (label, path, expected_err) in cases {
-            let err = LocalGguf::locate(&path)
-                .expect_err(&format!("{label}: expected error containing {expected_err:?}"));
+            let err = LocalGguf::locate(&path).expect_err(&format!(
+                "{label}: expected error containing {expected_err:?}"
+            ));
             assert!(
                 err.contains(expected_err),
                 "{label}: expected {expected_err:?}, got {err:?}"

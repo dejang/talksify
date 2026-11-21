@@ -4,7 +4,9 @@ use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use std::thread::{Builder, JoinHandle};
 
-use crate::audio_device::{AudioDevice, AudioProcessor, HeapProd, InputFormat, LevelMeter};
+use crate::audio_device::{
+    AudioDevice, AudioProcessor, HeapProd, InputFormat, LevelMeter, ring_buffer,
+};
 use crate::audio_source::AudioSource;
 use crate::llm_postprocessor::LlmPostProcessor;
 use crate::parakeet_stt::ParakeetStt;
@@ -35,7 +37,7 @@ struct WavRecording {
 impl WavRecording {
     fn start(path: PathBuf, fmt: InputFormat) -> Option<Self> {
         let cap = fmt.sample_rate as usize * usize::from(fmt.channels) * 10;
-        let (tx, rx) = HeapProd::ring_buffer(cap);
+        let (tx, rx) = ring_buffer(cap);
         Builder::new()
             .name("audio-writer".into())
             .spawn(move || recording::write_wav(path, fmt, rx))
@@ -163,7 +165,7 @@ impl<A: AudioSource + 'static> Transcriber<A> {
 
         log::info!("[transcriber] starting");
         // 10 s of audio, so the STT thread can fall behind during a long transcription.
-        let (mut audio_tx, audio_rx) = HeapProd::ring_buffer(self.stt_rate as usize * 10);
+        let (mut audio_tx, audio_rx) = ring_buffer(self.stt_rate as usize * 10);
         self.stt_tx
             .send(SttCommand::Audio(audio_rx))
             .map_err(|e| TranscriberError::Init(format!("stt send: {e}")))?;
@@ -266,7 +268,7 @@ impl<A: AudioSource + 'static> Transcriber<A> {
         Ok(())
     }
 
-    fn finish_recording(&mut self) -> Result<RawTranscript, TranscriberError> {
+    fn finish_recording(&mut self, strict: bool) -> Result<Transcript, TranscriberError> {
         if !self.is_recording.load(Ordering::Relaxed) {
             return Err(TranscriberError::NotRunning);
         }
@@ -300,35 +302,31 @@ impl<A: AudioSource + 'static> Transcriber<A> {
             raw.sentences.len(),
             raw.sentences
         );
-        Ok(raw)
-    }
-
-    fn finalize_transcript(raw: &RawTranscript, cleaned: String) -> Transcript {
+        let cleaned = if strict {
+            self.llm
+                .try_clean_transcript(&raw)
+                .map_err(TranscriberError::Stop)?
+        } else {
+            self.llm.clean_transcript(&raw)
+        };
         log::info!("[transcriber] cleaned: {cleaned:?}");
-        Transcript {
+        Ok(Transcript {
             raw: raw.to_joined_string(),
             cleaned,
-        }
+        })
     }
 
     /// # Errors
     /// Returns an error if idle or flushing the transcript fails.
     pub fn stop_transcribing(&mut self) -> Result<Transcript, TranscriberError> {
-        let raw = self.finish_recording()?;
-        let cleaned = self.llm.clean_transcript(&raw);
-        Ok(Self::finalize_transcript(&raw, cleaned))
+        self.finish_recording(false)
     }
 
     /// Stops recording and propagates local LLM load or inference errors instead of falling back.
     /// # Errors
     /// Returns an error if idle, flushing fails, or LLM cleanup fails.
     pub fn stop_transcribing_strict(&mut self) -> Result<Transcript, TranscriberError> {
-        let raw = self.finish_recording()?;
-        let cleaned = self
-            .llm
-            .try_clean_transcript(&raw)
-            .map_err(TranscriberError::Stop)?;
-        Ok(Self::finalize_transcript(&raw, cleaned))
+        self.finish_recording(true)
     }
 
     #[must_use]
@@ -339,6 +337,10 @@ impl<A: AudioSource + 'static> Transcriber<A> {
 
 impl<A: AudioSource> Drop for Transcriber<A> {
     fn drop(&mut self) {
+        self.is_recording.store(false, Ordering::Relaxed);
+        if let Some(handle) = self.audio_handle.take() {
+            let _ = handle.join();
+        }
         let _ = self.stt_tx.send(SttCommand::Shutdown);
         if let Some(handle) = self.stt_handle.take() {
             let _ = handle.join();
@@ -435,12 +437,31 @@ mod tests {
     #[ignore = "loads the bundled STT and LLM models and uses macOS `say`"]
     fn transcribes_other_languages() {
         let mut harness = TranscriberHarness::new();
-        let format = InputFormat { sample_rate: 16_000, channels: 1 };
+        let format = InputFormat {
+            sample_rate: 16_000,
+            channels: 1,
+        };
         let cases: &[(&str, &str, &[&str])] = &[
-            ("Anna", "Morgen treffen wir uns um zehn Uhr im Büro.", &["morgen", "uns um", "büro"]),
-            ("Jacques", "Demain, nous avons une réunion avec toute l'équipe.", &["demain", "équipe"]),
-            ("Mónica", "Mañana enviaré el informe al cliente.", &["mañana", "informe"]),
-            ("Alice", "Domani mattina finiamo il progetto.", &["domani", "progetto"]),
+            (
+                "Anna",
+                "Morgen treffen wir uns um zehn Uhr im Büro.",
+                &["morgen", "uns um", "büro"],
+            ),
+            (
+                "Jacques",
+                "Demain, nous avons une réunion avec toute l'équipe.",
+                &["demain", "équipe"],
+            ),
+            (
+                "Mónica",
+                "Mañana enviaré el informe al cliente.",
+                &["mañana", "informe"],
+            ),
+            (
+                "Alice",
+                "Domani mattina finiamo il progetto.",
+                &["domani", "progetto"],
+            ),
         ];
         for (voice, speech, words) in cases {
             let out = harness.transcribe(synthesize_in(Some(voice), speech), format);

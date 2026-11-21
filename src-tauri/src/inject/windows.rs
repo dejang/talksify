@@ -10,10 +10,13 @@ impl WindowsTextInjector {
 
 impl TextInject for WindowsTextInjector {
     fn type_text(&self, _text: &str) -> Result<(), InjectError> {
-        todo!("Windows text injection is not implemented yet")
+        Err(InjectError::Input(
+            "Windows text injection is not implemented yet".into(),
+        ))
     }
 
     fn request_accessibility(&self) -> bool {
-        todo!("Windows accessibility check is not implemented yet")
+        log::warn!("Windows text injection is not implemented yet");
+        false
     }
 }

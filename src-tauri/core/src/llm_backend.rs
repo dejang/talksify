@@ -64,14 +64,14 @@ pub(crate) struct MistralBackend {
 
 impl MistralBackend {
     pub(crate) fn load_and_warm(gguf: &LocalGguf) -> Result<Self, String> {
-        log::info!("loading LLM from {}/{}", gguf.dir, gguf.file);
+        log::info!("loading LLM from {}/{}", gguf.dir(), gguf.file());
         let start = std::time::Instant::now();
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .map_err(|e| format!("runtime: {e}"))?;
 
-        let builder = GgufModelBuilder::new(gguf.dir.clone(), vec![gguf.file.clone()])
+        let builder = GgufModelBuilder::new(gguf.dir().to_owned(), vec![gguf.file().to_owned()])
             .without_paged_attn()
             .with_max_num_seqs(1)
             .with_prefix_cache_n(None);
@@ -127,21 +127,6 @@ impl LlmBackend for MistralBackend {
 mod tests {
     use super::*;
 
-    fn make_choice(content: Option<&str>, finish_reason: &str) -> Choice {
-        Choice {
-            finish_reason: finish_reason.into(),
-            stop_sequence: None,
-            index: 0,
-            message: mistralrs::ResponseMessage {
-                content: content.map(str::to_owned),
-                role: "assistant".into(),
-                tool_calls: None,
-                reasoning_content: None,
-            },
-            logprobs: None,
-        }
-    }
-
     #[test]
     fn completion_parsing_strict_validation_and_tag_stripping() {
         type ChoiceCase = (
@@ -169,7 +154,18 @@ mod tests {
             ),
         ];
         for (input, expected_parse, expected_strict) in choice_cases {
-            let choice = input.map(|(content, reason)| make_choice(content, reason));
+            let choice = input.map(|(content, reason)| Choice {
+                finish_reason: reason.into(),
+                stop_sequence: None,
+                index: 0,
+                message: mistralrs::ResponseMessage {
+                    content: content.map(str::to_owned),
+                    role: "assistant".into(),
+                    tool_calls: None,
+                    reasoning_content: None,
+                },
+                logprobs: None,
+            });
             match (Completion::from_choice(choice), expected_parse) {
                 (Ok(completion), Ok((text, reason))) => {
                     assert_eq!(completion.text, *text);
@@ -179,7 +175,9 @@ mod tests {
                         (Err(err), Err(substr)) => {
                             assert!(err.contains(substr), "expected {substr:?}, got {err:?}");
                         }
-                        (got, want) => panic!("validate_strict mismatch: got {got:?}, want {want:?}"),
+                        (got, want) => {
+                            panic!("validate_strict mismatch: got {got:?}, want {want:?}")
+                        }
                     }
                 }
                 (Err(err), Err(substr)) => {

@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod cli_integration {
+    use std::ffi::OsStr;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Output};
@@ -52,8 +53,17 @@ mod cli_integration {
             }
         }
 
-        fn root(&self) -> &Path {
-            self.dir.path()
+        fn write_fake_gguf(
+            &self,
+            models_rel: impl AsRef<OsStr>,
+            filename: impl AsRef<OsStr>,
+            bytes: &[u8],
+        ) -> PathBuf {
+            let models_dir = self.dir.path().join(models_rel.as_ref());
+            let llm_dir = models_dir.join("qwen-0.6b");
+            fs::create_dir_all(&llm_dir).unwrap();
+            fs::write(llm_dir.join(filename.as_ref()), bytes).unwrap();
+            models_dir
         }
 
         fn run_replay_file(replay_path: &Path, models_dir: &Path) -> Output {
@@ -66,12 +76,7 @@ mod cli_integration {
                 .unwrap()
         }
 
-        fn assert_single_error(
-            case_name: &str,
-            mode: &str,
-            output: &Output,
-            expected_error: &str,
-        ) {
+        fn assert_single_error(case_name: &str, mode: &str, output: &Output, expected_error: &str) {
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(
                 !output.status.success(),
@@ -153,23 +158,18 @@ mod cli_integration {
         let env = CliEnv::new();
 
         // Failure matrix: invalid GGUF files and non-UTF-8 model paths.
-        let invalid_models = env.root().join("invalid-models");
-        let invalid_llm = invalid_models.join("qwen-0.6b");
-        fs::create_dir_all(&invalid_llm).unwrap();
+        let invalid_models =
+            env.write_fake_gguf("invalid-models", "model.gguf", b"not-a-valid-gguf");
         #[cfg(unix)]
         CliEnv::symlink_bundled_stt_and_vad(&invalid_models);
-        fs::write(invalid_llm.join("model.gguf"), b"not-a-valid-gguf").unwrap();
 
-        let mut failure_cases: Vec<(&str, PathBuf, &str)> = vec![(
-            "invalid-gguf",
-            invalid_models,
-            "invalid GGUF magic",
-        )];
+        let mut failure_cases: Vec<(&str, PathBuf, &str)> =
+            vec![("invalid-gguf", invalid_models, "invalid GGUF magic")];
 
         // Success matrix: intentional no-GGUF baselines and non-UTF-8 replay path.
-        let empty_qwen = env.root().join("empty-qwen");
+        let empty_qwen = env.dir.path().join("empty-qwen");
         fs::create_dir_all(empty_qwen.join("qwen-0.6b")).unwrap();
-        let no_qwen = env.root().join("no-qwen");
+        let no_qwen = env.dir.path().join("no-qwen");
         fs::create_dir(&no_qwen).unwrap();
         let mut success_cases: Vec<(&str, PathBuf, PathBuf)> = vec![
             ("empty-qwen", env.replay_path.clone(), empty_qwen),
@@ -177,7 +177,7 @@ mod cli_integration {
             (
                 "absent-nested",
                 env.replay_path.clone(),
-                env.root().join("absent/models"),
+                env.dir.path().join("absent/models"),
             ),
         ];
 
@@ -186,26 +186,22 @@ mod cli_integration {
             use std::ffi::OsString;
             use std::os::unix::ffi::OsStringExt;
 
-            let bad_dir_models = env
-                .root()
-                .join(OsString::from_vec(b"models-\xff".to_vec()));
-            let bad_dir_llm = bad_dir_models.join("qwen-0.6b");
-            fs::create_dir_all(&bad_dir_llm).unwrap();
-            fs::write(bad_dir_llm.join("model.gguf"), b"gguf").unwrap();
+            let bad_dir_models = env.write_fake_gguf(
+                OsString::from_vec(b"models-\xff".to_vec()),
+                "model.gguf",
+                b"gguf",
+            );
             failure_cases.push((
                 "non-utf8-dir",
                 bad_dir_models,
                 "is not valid UTF-8 and cannot be loaded",
             ));
 
-            let bad_file_models = env.root().join("utf8-models");
-            let bad_file_llm = bad_file_models.join("qwen-0.6b");
-            fs::create_dir_all(&bad_file_llm).unwrap();
-            fs::write(
-                bad_file_llm.join(OsString::from_vec(b"model-\xff.gguf".to_vec())),
+            let bad_file_models = env.write_fake_gguf(
+                "utf8-models",
+                OsString::from_vec(b"model-\xff.gguf".to_vec()),
                 b"gguf",
-            )
-            .unwrap();
+            );
             failure_cases.push((
                 "non-utf8-file",
                 bad_file_models,
@@ -213,7 +209,8 @@ mod cli_integration {
             ));
 
             let non_utf8_replay = env
-                .root()
+                .dir
+                .path()
                 .join(OsString::from_vec(b"raw-\xff.json".to_vec()));
             fs::copy(&env.replay_path, &non_utf8_replay).unwrap();
             success_cases.push(("non-utf8-replay-path", non_utf8_replay, no_qwen));
@@ -285,7 +282,9 @@ mod cli_integration {
             "exact worse must distinguish comma filename and escape newline:\n{tricky_stderr}"
         );
         assert!(
-            !tricky_stderr.lines().any(|line| line.starts_with("line2.wav")),
+            !tricky_stderr
+                .lines()
+                .any(|line| line.starts_with("line2.wav")),
             "newline filename split across stderr lines:\n{tricky_stderr}"
         );
     }

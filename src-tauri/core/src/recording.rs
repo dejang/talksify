@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::audio_device::{HeapCons, InputFormat};
@@ -6,62 +6,54 @@ use crate::audio_device::{HeapCons, InputFormat};
 /// Writes everything from `audio` to a 32-bit float WAV at `path`, until the
 /// producer is dropped.
 pub(crate) fn write_wav(path: PathBuf, format: InputFormat, mut audio: HeapCons<f32>) {
-    match try_write_wav(&path, format, &mut audio) {
+    let result: hound::Result<()> = (|| {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let spec = hound::WavSpec {
+            channels: format.channels,
+            sample_rate: format.sample_rate,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let mut writer = hound::WavWriter::create(&path, spec)?;
+
+        loop {
+            let abandoned = audio.is_abandoned();
+            let mut wrote_any = false;
+            while let Ok(sample) = audio.pop() {
+                writer.write_sample(sample)?;
+                wrote_any = true;
+            }
+            if abandoned {
+                break;
+            }
+            if !wrote_any {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        writer.finalize()
+    })();
+
+    match result {
         Ok(()) => log::info!("[recording] saved {}", path.display()),
         Err(e) => {
             log::error!("[recording] {}: {e}", path.display());
-            drain_until_abandoned(&mut audio);
+            loop {
+                let abandoned = audio.is_abandoned();
+                if let Ok(chunk) = audio.read_chunk(audio.slots()) {
+                    chunk.commit_all();
+                }
+                if abandoned {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
         }
     }
     drop(path);
-}
-
-fn try_write_wav(
-    path: &Path,
-    format: InputFormat,
-    audio: &mut HeapCons<f32>,
-) -> hound::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let spec = hound::WavSpec {
-        channels: format.channels,
-        sample_rate: format.sample_rate,
-        bits_per_sample: 32,
-        sample_format: hound::SampleFormat::Float,
-    };
-    let mut writer = hound::WavWriter::create(path, spec)?;
-
-    loop {
-        let abandoned = audio.is_abandoned();
-        let mut wrote_any = false;
-        while let Ok(sample) = audio.pop() {
-            writer.write_sample(sample)?;
-            wrote_any = true;
-        }
-        if abandoned {
-            break;
-        }
-        if !wrote_any {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
-
-    writer.finalize()
-}
-
-fn drain_until_abandoned(audio: &mut HeapCons<f32>) {
-    loop {
-        let abandoned = audio.is_abandoned();
-        if let Ok(chunk) = audio.read_chunk(audio.slots()) {
-            chunk.commit_all();
-        }
-        if abandoned {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
 }
 
 #[cfg(test)]

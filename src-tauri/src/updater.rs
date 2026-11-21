@@ -7,7 +7,7 @@ use tauri::menu::MenuItem;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-use crate::event_handler::{AppState, DictationState};
+use crate::event_handler::AppState;
 
 enum PendingUpdate {
     None,
@@ -205,7 +205,7 @@ impl Updater {
     }
 
     async fn finish_or_restart(&self, app: &AppHandle, version: &str) {
-        if !is_dictation_busy(app) {
+        if !app.state::<AppState>().is_busy() {
             app.restart();
         }
         self.set_menu("Restart to Apply Update", true);
@@ -218,14 +218,6 @@ impl Updater {
             app.restart();
         }
     }
-}
-
-fn is_dictation_busy(app: &AppHandle) -> bool {
-    let state = app.state::<AppState>();
-    state
-        .state
-        .lock()
-        .is_ok_and(|s| !matches!(*s, DictationState::Idle))
 }
 
 async fn show_info(app: &AppHandle, title: &str, message: &str, kind: MessageDialogKind) {
@@ -253,7 +245,8 @@ async fn ask_confirm(
     let app = app.clone();
     let title = title.to_owned();
     let message = message.to_owned();
-    let buttons = MessageDialogButtons::OkCancelCustom(ok_label.to_owned(), cancel_label.to_owned());
+    let buttons =
+        MessageDialogButtons::OkCancelCustom(ok_label.to_owned(), cancel_label.to_owned());
     tauri::async_runtime::spawn_blocking(move || {
         app.dialog()
             .message(message)
@@ -270,7 +263,7 @@ fn available_label(version: &str) -> String {
     format!("Update Available (v{version})…")
 }
 
-fn progress_label(downloaded: u64, total: Option<u64>) -> String {
+pub(crate) fn progress_label(downloaded: u64, total: Option<u64>) -> String {
     if let Some(total) = total.filter(|&t| t > 0) {
         let pct = ((u128::from(downloaded) * 100) / u128::from(total)).min(100);
         format!("Downloading Update ({pct}%)…")
@@ -280,11 +273,21 @@ fn progress_label(downloaded: u64, total: Option<u64>) -> String {
     }
 }
 
-fn confirm_prompt(version: &str, current: &str, notes: Option<&str>, max_chars: usize) -> String {
+pub(crate) fn confirm_prompt(
+    version: &str,
+    current: &str,
+    notes: Option<&str>,
+    max_chars: usize,
+) -> String {
     let trimmed = notes.map(str::trim).filter(|s| !s.is_empty());
     let notes_section = match trimmed {
         Some(body) => {
-            let excerpt = truncate_chars(body, max_chars);
+            let excerpt = if body.chars().count() <= max_chars {
+                body.to_owned()
+            } else {
+                let kept: String = body.chars().take(max_chars).collect();
+                format!("{kept}…")
+            };
             format!("\n\nRelease notes:\n{excerpt}")
         }
         None => String::new(),
@@ -295,24 +298,13 @@ fn confirm_prompt(version: &str, current: &str, notes: Option<&str>, max_chars: 
     )
 }
 
-fn truncate_chars(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_owned();
-    }
-    let kept: String = text.chars().take(max_chars).collect();
-    format!("{kept}…")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn formats_progress_with_and_without_content_length() {
-        assert_eq!(
-            progress_label(500, Some(1000)),
-            "Downloading Update (50%)…"
-        );
+        assert_eq!(progress_label(500, Some(1000)), "Downloading Update (50%)…");
         assert_eq!(
             progress_label(1500, Some(1000)),
             "Downloading Update (100%)…"

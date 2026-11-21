@@ -1,9 +1,9 @@
 use std::fmt;
 use std::time::Duration;
 
-use crate::content_score::ContentErrors;
+use crate::content_score::{self, ContentErrors};
 use crate::dump::RecordingName;
-use crate::score::Errors;
+use crate::score::{self, Errors};
 
 pub(crate) struct FileSample<'a> {
     pub(crate) name: &'a RecordingName,
@@ -26,16 +26,16 @@ struct ScoreTotals {
 
 impl ScoreTotals {
     fn from_texts(expected: &str, raw: &str, cleaned: &str) -> Self {
-        let expected_tokens = Errors::tokenize(expected);
-        let expected_words = ContentErrors::tokenize(expected);
+        let expected_tokens = score::tokenize(expected);
+        let expected_words = content_score::tokenize(expected);
         Self {
-            exact_raw: Errors::between(&expected_tokens, &Errors::tokenize(raw)),
-            exact_cleaned: Errors::between(&expected_tokens, &Errors::tokenize(cleaned)),
+            exact_raw: Errors::between(&expected_tokens, &score::tokenize(raw)),
+            exact_cleaned: Errors::between(&expected_tokens, &score::tokenize(cleaned)),
             exact_tokens: expected_tokens.len(),
-            content_raw: ContentErrors::between(&expected_words, &ContentErrors::tokenize(raw)),
+            content_raw: ContentErrors::between(&expected_words, &content_score::tokenize(raw)),
             content_cleaned: ContentErrors::between(
                 &expected_words,
-                &ContentErrors::tokenize(cleaned),
+                &content_score::tokenize(cleaned),
             ),
             content_words: expected_words.len(),
         }
@@ -92,20 +92,6 @@ impl Aggregate {
 #[derive(Default)]
 struct RecordingList(Vec<RecordingName>);
 
-impl RecordingList {
-    fn push(&mut self, name: RecordingName) {
-        self.0.push(name);
-    }
-
-    fn extend(&mut self, names: impl IntoIterator<Item = RecordingName>) {
-        self.0.extend(names);
-    }
-
-    fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-}
-
 impl fmt::Display for RecordingList {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.0.is_empty() {
@@ -140,10 +126,10 @@ impl HarnessReport {
         let scores = ScoreTotals::from_texts(expected, raw, cleaned);
 
         if scores.exact_cleaned.total() > scores.exact_raw.total() {
-            self.exact_worse.push(sample.name.clone());
+            self.exact_worse.0.push(sample.name.clone());
         }
         if scores.content_cleaned.total() > scores.content_raw.total() {
-            self.content_worse.push(sample.name.clone());
+            self.content_worse.0.push(sample.name.clone());
         }
         self.overall.accumulate(&scores);
         if sample.duration_secs > 60.0 {
@@ -166,7 +152,7 @@ impl HarnessReport {
     }
 
     pub(crate) fn record_skipped(&mut self, files: impl IntoIterator<Item = RecordingName>) {
-        self.skipped.extend(files);
+        self.skipped.0.extend(files);
     }
 }
 
@@ -193,7 +179,7 @@ impl fmt::Display for HarnessReport {
             lines.push(format!("exact worse      {}", self.exact_worse));
             lines.push(format!("content worse    {}", self.content_worse));
         }
-        if !self.skipped.is_empty() {
+        if !self.skipped.0.is_empty() {
             lines.push(format!("skipped, no .txt: {}", self.skipped));
         }
         f.write_str(&lines.join("\n"))
@@ -322,11 +308,15 @@ mod tests {
                     wait: Duration::from_millis(100),
                 });
             }
-            assert_eq!(find_line(&report.to_string(), "exact worse"), expected_worse);
+            assert_eq!(
+                find_line(&report.to_string(), "exact worse"),
+                expected_worse
+            );
         }
 
-        let tricky =
-            RecordingName::from_path(Path::new("line1\nline2\r\u{85}\u{2028}\u{2029}, \"tail\".wav"));
+        let tricky = RecordingName::from_path(Path::new(
+            "line1\nline2\r\u{85}\u{2028}\u{2029}, \"tail\".wav",
+        ));
         let expected_token = tricky.quoted();
         let mut report = HarnessReport::default();
         let entry = report.record(&FileSample {

@@ -1,6 +1,7 @@
 /// Writes numbers as digits, percentages as `N%` and spoken file extensions as `.ext`.
 pub(crate) fn apply(text: &str) -> String {
-    extensions(&numbers(text))
+    let numbered = TokenizedText::new(text).replace_numbers();
+    TokenizedText::new(&numbered).replace_extensions()
 }
 
 struct Word<'a> {
@@ -9,25 +10,203 @@ struct Word<'a> {
     end: usize,
 }
 
-fn words(text: &str) -> Vec<Word<'_>> {
-    text.match_indices(|c: char| c.is_alphanumeric() || matches!(c, '_' | '\''))
-        .fold(Vec::<Word<'_>>::new(), |mut words, (start, ch)| {
-            let end = start + ch.len();
-            if let Some(last) = words.last_mut().filter(|last| last.end == start) {
-                last.end = end;
-                last.text = &text[last.start..end];
-            } else {
-                words.push(Word {
-                    text: &text[start..end],
-                    start,
-                    end,
-                });
-            }
-            words
-        })
+struct TokenizedText<'a> {
+    text: &'a str,
+    words: Vec<Word<'a>>,
 }
 
-fn small(word: &str) -> Option<u64> {
+impl<'a> TokenizedText<'a> {
+    fn new(text: &'a str) -> Self {
+        let words = text
+            .match_indices(|c: char| c.is_alphanumeric() || matches!(c, '_' | '\''))
+            .fold(Vec::<Word<'a>>::new(), |mut words, (start, ch)| {
+                let end = start + ch.len();
+                if let Some(last) = words.last_mut().filter(|last| last.end == start) {
+                    last.end = end;
+                    last.text = &text[last.start..end];
+                } else {
+                    words.push(Word {
+                        text: &text[start..end],
+                        start,
+                        end,
+                    });
+                }
+                words
+            });
+        Self { text, words }
+    }
+
+    // The separator immediately before a word (or the leading text for word zero).
+    fn gap_before(&self, index: usize) -> &'a str {
+        let start = index.checked_sub(1).map_or(0, |i| self.words[i].end);
+        &self.text[start..self.words[index].start]
+    }
+
+    fn percent_end(&self, index: usize) -> Option<usize> {
+        let next = self.words.get(index)?;
+        if !space(self.gap_before(index)) {
+            return None;
+        }
+        if next.text.eq_ignore_ascii_case("percent") {
+            return Some(index + 1);
+        }
+        let cent = self.words.get(index + 1)?;
+        (next.text.eq_ignore_ascii_case("per")
+            && cent.text.eq_ignore_ascii_case("cent")
+            && space(self.gap_before(index + 1)))
+        .then_some(index + 2)
+    }
+
+    // Keep the whole number in a mixed fraction, not just its fractional tail.
+    fn is_mixed_fraction(&self, parts: &[&str], index: usize) -> bool {
+        if parts.get(index) != Some(&"and") || !space(self.gap_before(index)) {
+            return false;
+        }
+        let mut j = index + 1;
+        while j < parts.len() && number_gap(self.gap_before(j)) {
+            if ordinal_or_fraction(parts[j]) && parts[j] != "first" {
+                return true;
+            }
+            if !(is_number(parts[j]) || (j == index + 1 && parts[j] == "a")) {
+                return false;
+            }
+            j += 1;
+        }
+        false
+    }
+
+    fn replace_numbers(&self) -> String {
+        let lower: Vec<_> = self
+            .words
+            .iter()
+            .map(|word| word.text.to_ascii_lowercase())
+            .collect();
+        let parts: Vec<_> = lower.iter().map(String::as_str).collect();
+        let mut output = String::with_capacity(self.text.len());
+        let mut cursor = 0;
+        let mut i = 0;
+        while i < self.words.len() {
+            let start = i;
+            let digits = lower[i].bytes().all(|b| b.is_ascii_digit());
+            if !digits && !is_number(&lower[i]) {
+                i += 1;
+                continue;
+            }
+            i += 1;
+            if !digits {
+                while i < self.words.len() && number_gap(self.gap_before(i)) {
+                    if is_number(&lower[i]) {
+                        i += 1;
+                    } else if lower[i] == "and"
+                        && number_word(&lower[i - 1]).is_some_and(|v| v >= 100)
+                        && i + 1 < self.words.len()
+                        && number_gap(self.gap_before(i + 1))
+                    {
+                        if ordinal_or_fraction(&lower[i + 1]) || lower[i + 1] == "second" {
+                            i += 2;
+                            break;
+                        }
+                        if !is_number(&lower[i + 1]) {
+                            break;
+                        }
+                        let mut end = i + 2;
+                        while end < self.words.len()
+                            && is_number(&lower[end])
+                            && number_gap(self.gap_before(end))
+                        {
+                            end += 1;
+                        }
+                        if cardinal(&parts[start..i]).is_some()
+                            && cardinal(&parts[start..end]).is_none()
+                        {
+                            break;
+                        }
+                        i = end;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            let percent = self.percent_end(i);
+            let before = start
+                .checked_sub(1)
+                .filter(|_| space(self.gap_before(start)));
+            let after_point =
+                lower.get(i).is_some_and(|w| w == "point") && space(self.gap_before(i));
+            let after_ordinal = lower.get(i).is_some_and(|word| {
+                let gap = self.gap_before(i);
+                (ordinal_or_fraction(word) && number_gap(gap)) || (word == "second" && gap == "-")
+            });
+            let excluded = before.is_some_and(|j| lower[j] == "point")
+                || after_point
+                || after_ordinal
+                || self.is_mixed_fraction(&parts, i);
+            let value = if digits {
+                Some(self.words[start].text.to_owned())
+            } else {
+                cardinal(&parts[start..i]).map(|n| n.to_string())
+            };
+            let lone_one = i == start + 1 && lower[start] == "one" && percent.is_none();
+            if !excluded
+                && !lone_one
+                && let Some(value) = value
+            {
+                let end = percent.unwrap_or(i);
+                output.push_str(&self.text[cursor..self.words[start].start]);
+                output.push_str(&value);
+                if percent.is_some() {
+                    output.push('%');
+                }
+                cursor = self.words[end - 1].end;
+                i = end;
+            }
+        }
+        output.push_str(&self.text[cursor..]);
+        output
+    }
+
+    fn replace_extensions(&self) -> String {
+        let mut output = String::with_capacity(self.text.len());
+        let mut cursor = 0;
+        for (i, pair) in self.words.windows(2).enumerate() {
+            let [dot, ext] = pair else { continue };
+            if !dot.text.eq_ignore_ascii_case("dot") || !space(self.gap_before(i + 1)) {
+                continue;
+            }
+            let lower = ext.text.to_ascii_lowercase();
+            let Some(ext_name) = (match lower.as_str() {
+                "wav" | "wave" => Some("wav"),
+                "txt" | "text" => Some("txt"),
+                "json" | "jason" => Some("json"),
+                "md" | "pdf" | "csv" | "rs" | "ts" | "tsx" | "js" | "py" | "toml" | "yaml"
+                | "yml" | "html" | "css" | "png" | "jpg" | "mp3" => Some(lower.as_str()),
+                _ => None,
+            }) else {
+                continue;
+            };
+            let mut start = dot.start;
+            if i > 0 {
+                let previous = &self.words[i - 1];
+                let gap = self.gap_before(i);
+                let standalone = matches!(
+                    previous.text.to_ascii_lowercase().as_str(),
+                    "a" | "an" | "the" | "in" | "as" | "of" | "to" | "or" | "and" | "with" | "from"
+                );
+                if !standalone && space(gap) && !gap.contains(['\n', '\r']) {
+                    start = previous.end;
+                }
+            }
+            output.push_str(&self.text[cursor..start]);
+            output.push('.');
+            output.push_str(ext_name);
+            cursor = ext.end;
+        }
+        output.push_str(&self.text[cursor..]);
+        output
+    }
+}
+
+fn number_word(word: &str) -> Option<u64> {
     match word {
         "zero" => Some(0),
         "one" => Some(1),
@@ -57,12 +236,6 @@ fn small(word: &str) -> Option<u64> {
         "seventy" => Some(70),
         "eighty" => Some(80),
         "ninety" => Some(90),
-        _ => None,
-    }
-}
-
-fn scale(word: &str) -> Option<u64> {
-    match word {
         "hundred" => Some(100),
         "thousand" => Some(1_000),
         "million" => Some(1_000_000),
@@ -71,15 +244,15 @@ fn scale(word: &str) -> Option<u64> {
 }
 
 fn is_number(word: &str) -> bool {
-    small(word).is_some() || scale(word).is_some()
+    number_word(word).is_some()
 }
 
 fn under_hundred(parts: &[&str]) -> Option<u64> {
     match parts {
-        [word] => small(word),
+        [word] => number_word(word).filter(|&v| v < 100),
         [tens, units] => {
-            let tens = small(tens)?;
-            let units = small(units)?;
+            let tens = number_word(tens).filter(|&v| v < 100)?;
+            let units = number_word(units).filter(|&v| v < 100)?;
             (tens >= 20 && tens % 10 == 0 && (1..10).contains(&units)).then_some(tens + units)
         }
         _ => None,
@@ -88,10 +261,7 @@ fn under_hundred(parts: &[&str]) -> Option<u64> {
 
 fn under_thousand(parts: &[&str]) -> Option<u64> {
     if let [unit, "hundred", rest @ ..] = parts {
-        let unit = small(unit)?;
-        if !(1..10).contains(&unit) {
-            return None;
-        }
+        let unit = number_word(unit).filter(|&v| (1..10).contains(&v))?;
         if rest.is_empty() {
             return Some(unit * 100);
         }
@@ -108,7 +278,7 @@ fn cardinal(parts: &[&str]) -> Option<u64> {
     let mut total = 0;
     let mut previous_scale = u64::MAX;
     for (index, part) in parts.iter().enumerate() {
-        let Some(scale) = scale(part).filter(|scale| *scale > 100) else {
+        let Some(scale) = number_word(part).filter(|&v| v > 100) else {
             continue;
         };
         if scale >= previous_scale {
@@ -133,12 +303,6 @@ fn cardinal(parts: &[&str]) -> Option<u64> {
     (total == 0 || tail > 0).then_some(total + tail)
 }
 
-// The separator immediately before a word (or the leading text for word zero).
-fn gap_before<'a>(text: &'a str, words: &[Word<'_>], index: usize) -> &'a str {
-    let start = index.checked_sub(1).map_or(0, |i| words[i].end);
-    &text[start..words[index].start]
-}
-
 fn space(gap: &str) -> bool {
     !gap.is_empty() && gap.chars().all(char::is_whitespace)
 }
@@ -147,192 +311,44 @@ fn number_gap(gap: &str) -> bool {
     space(gap) || gap == "-"
 }
 
-fn percent_end(text: &str, words: &[Word<'_>], index: usize) -> Option<usize> {
-    let next = words.get(index)?;
-    if !space(gap_before(text, words, index)) {
-        return None;
-    }
-    if next.text.eq_ignore_ascii_case("percent") {
-        return Some(index + 1);
-    }
-    let cent = words.get(index + 1)?;
-    (next.text.eq_ignore_ascii_case("per")
-        && cent.text.eq_ignore_ascii_case("cent")
-        && space(gap_before(text, words, index + 1)))
-    .then_some(index + 2)
-}
-
 // Cardinal prefixes of ordinals and fractions must stay written as words too.
 fn ordinal_or_fraction(word: &str) -> bool {
     let singular = word.strip_suffix('s').unwrap_or(word);
     matches!(
         singular,
-        "first" | "third" | "fourth" | "fifth" | "sixth" | "seventh"
-            | "eighth" | "ninth" | "tenth" | "eleventh" | "twelfth" | "thirteenth"
-            | "fourteenth" | "fifteenth" | "sixteenth" | "seventeenth" | "eighteenth"
-            | "nineteenth" | "twentieth" | "thirtieth" | "fortieth" | "fiftieth"
-            | "sixtieth" | "seventieth" | "eightieth" | "ninetieth" | "hundredth"
-            | "thousandth" | "millionth" | "half" | "halve" | "quarter"
+        "first"
+            | "third"
+            | "fourth"
+            | "fifth"
+            | "sixth"
+            | "seventh"
+            | "eighth"
+            | "ninth"
+            | "tenth"
+            | "eleventh"
+            | "twelfth"
+            | "thirteenth"
+            | "fourteenth"
+            | "fifteenth"
+            | "sixteenth"
+            | "seventeenth"
+            | "eighteenth"
+            | "nineteenth"
+            | "twentieth"
+            | "thirtieth"
+            | "fortieth"
+            | "fiftieth"
+            | "sixtieth"
+            | "seventieth"
+            | "eightieth"
+            | "ninetieth"
+            | "hundredth"
+            | "thousandth"
+            | "millionth"
+            | "half"
+            | "halve"
+            | "quarter"
     )
-}
-
-// Keep the whole number in a mixed fraction, not just its fractional tail.
-fn mixed_fraction(text: &str, words: &[Word<'_>], parts: &[&str], index: usize) -> bool {
-    if parts.get(index) != Some(&"and") || !space(gap_before(text, words, index)) {
-        return false;
-    }
-    let mut i = index + 1;
-    while i < parts.len() && number_gap(gap_before(text, words, i)) {
-        let word = parts[i];
-        if ordinal_or_fraction(word) && word != "first" {
-            return true;
-        }
-        if !(is_number(word) || (i == index + 1 && word == "a")) {
-            break;
-        }
-        i += 1;
-    }
-    false
-}
-
-fn numbers(text: &str) -> String {
-    let words = words(text);
-    let lower: Vec<_> = words
-        .iter()
-        .map(|word| word.text.to_ascii_lowercase())
-        .collect();
-    let parts: Vec<_> = lower.iter().map(String::as_str).collect();
-    let mut output = String::with_capacity(text.len());
-    let mut cursor = 0;
-    let mut i = 0;
-    while i < words.len() {
-        let start = i;
-        let digits = lower[i].bytes().all(|b| b.is_ascii_digit());
-        if !digits && !is_number(&lower[i]) {
-            i += 1;
-            continue;
-        }
-        i += 1;
-        if !digits {
-            while i < words.len() && number_gap(gap_before(text, &words, i)) {
-                if is_number(&lower[i]) {
-                    i += 1;
-                } else if lower[i] == "and"
-                    && scale(&lower[i - 1]).is_some()
-                    && i + 1 < words.len()
-                    && number_gap(gap_before(text, &words, i + 1))
-                {
-                    // Keep ordinal/fraction phrases intact across the conjunction.
-                    if ordinal_or_fraction(&lower[i + 1]) || lower[i + 1] == "second" {
-                        i += 2;
-                        break;
-                    }
-                    if !is_number(&lower[i + 1]) {
-                        break;
-                    }
-                    let mut end = i + 2;
-                    while end < words.len()
-                        && is_number(&lower[end])
-                        && number_gap(gap_before(text, &words, end))
-                    {
-                        end += 1;
-                    }
-                    // Split independent valid cardinals, but never split an invalid
-                    // prefix such as "a hundred" from its "and fifty" tail.
-                    if cardinal(&parts[start..i]).is_some()
-                        && cardinal(&parts[start..end]).is_none()
-                    {
-                        break;
-                    }
-                    i = end;
-                } else {
-                    break;
-                }
-            }
-        }
-        let percent = percent_end(text, &words, i);
-        let before = start
-            .checked_sub(1)
-            .filter(|_| space(gap_before(text, &words, start)));
-        let after_point = lower.get(i).is_some_and(|word| word == "point")
-            && space(gap_before(text, &words, i));
-        // "second" with a space can be a duration; hyphenated "twenty-second"
-        // is unambiguously ordinal. Plural "seconds" is always a duration.
-        let after_ordinal_or_fraction = lower.get(i).is_some_and(|word| {
-            let gap = gap_before(text, &words, i);
-            (ordinal_or_fraction(word) && number_gap(gap)) || (word == "second" && gap == "-")
-        });
-        let excluded = before.is_some_and(|j| lower[j] == "point")
-            || after_point
-            || after_ordinal_or_fraction
-            || mixed_fraction(text, &words, &parts, i);
-        let value = if digits {
-            Some(words[start].text.to_owned())
-        } else {
-            cardinal(&parts[start..i]).map(|n| n.to_string())
-        };
-        let lone_one = i == start + 1 && lower[start] == "one" && percent.is_none();
-        if !excluded
-            && !lone_one
-            && let Some(value) = value
-        {
-            let end = percent.unwrap_or(i);
-            output.push_str(&text[cursor..words[start].start]);
-            output.push_str(&value);
-            if percent.is_some() {
-                output.push('%');
-            }
-            cursor = words[end - 1].end;
-            i = end;
-        }
-    }
-    output.push_str(&text[cursor..]);
-    output
-}
-
-fn extension(word: &str) -> Option<&str> {
-    match word {
-        "wav" | "wave" => Some("wav"),
-        "txt" | "text" => Some("txt"),
-        "json" | "jason" => Some("json"),
-        "md" | "pdf" | "csv" | "rs" | "ts" | "tsx" | "js" | "py" | "toml" | "yaml" | "yml"
-        | "html" | "css" | "png" | "jpg" | "mp3" => Some(word),
-        _ => None,
-    }
-}
-
-fn extensions(text: &str) -> String {
-    let words = words(text);
-    let mut output = String::with_capacity(text.len());
-    let mut cursor = 0;
-    for (i, pair) in words.windows(2).enumerate() {
-        let [dot, ext] = pair else { continue };
-        if !dot.text.eq_ignore_ascii_case("dot") || !space(gap_before(text, &words, i + 1)) {
-            continue;
-        }
-        let lower = ext.text.to_ascii_lowercase();
-        let Some(ext_name) = extension(&lower) else {
-            continue;
-        };
-        let mut start = dot.start;
-        if i > 0 {
-            let previous = &words[i - 1];
-            let gap = gap_before(text, &words, i);
-            let standalone = matches!(
-                previous.text.to_ascii_lowercase().as_str(),
-                "a" | "an" | "the" | "in" | "as" | "of" | "to" | "or" | "and" | "with" | "from"
-            );
-            if !standalone && space(gap) && !gap.contains(['\n', '\r']) {
-                start = previous.end;
-            }
-        }
-        output.push_str(&text[cursor..start]);
-        output.push('.');
-        output.push_str(ext_name);
-        cursor = ext.end;
-    }
-    output.push_str(&text[cursor..]);
-    output
 }
 
 #[cfg(test)]
@@ -341,8 +357,9 @@ mod tests {
     use crate::text_format::TextFormatter;
 
     #[test]
-    fn cardinal_numbers() {
-        for (input, expected) in [
+    fn converts_numbers_percentages_and_respects_boundaries() {
+        let converted = [
+            // Cardinals
             ("forty two files", "42 files"),
             ("twenty-five", "25"),
             ("one hundred and twenty", "120"),
@@ -355,28 +372,46 @@ mod tests {
                 "nine hundred ninety-nine thousand eight hundred seventy-six",
                 "999876",
             ),
-        ] {
-            assert_eq!(apply(input), expected, "{input}");
-        }
-    }
-
-    #[test]
-    fn percentages() {
-        for (input, expected) in [
+            // Percentages
             ("ten percent", "10%"),
             ("10 percent", "10%"),
             ("one percent", "1%"),
             ("twenty five per cent", "25%"),
             ("ONE PER CENT!", "1%!"),
             ("0 percent", "0%"),
-        ] {
+            // Boundaries
+            ("wait thirty seconds", "wait 30 seconds"),
+            ("five seconds", "5 seconds"),
+            ("a ten second pause", "a 10 second pause"),
+            ("the twenty-second", "the twenty-second"),
+            ("between one hundred and two hundred", "between 100 and 200"),
+            ("one thousand and two thousand", "1000 and 2000"),
+            ("between five and ten", "between 5 and 10"),
+            ("between ten and twenty percent", "between 10 and 20%"),
+            ("one and two", "one and 2"),
+            ("three hundred and zero", "300 and 0"),
+            ("twenty and five", "20 and 5"),
+            ("a ten percent discount", "a 10% discount"),
+            ("an eighty percent chance", "an 80% chance"),
+            ("a twenty-minute walk", "a 20-minute walk"),
+            ("a million times", "a million times"),
+            ("the twenty-first century", "the twenty-first century"),
+            ("two thirds", "two thirds"),
+            (
+                "one hundred and twenty-first",
+                "one hundred and twenty-first",
+            ),
+            ("three quarters", "three quarters"),
+            ("two halves", "two halves"),
+            ("twenty sixths", "twenty sixths"),
+            ("two hundred and five", "205"),
+            ("two thousand and ten", "2010"),
+        ];
+        for (input, expected) in converted {
             assert_eq!(apply(input), expected, "{input}");
         }
-    }
 
-    #[test]
-    fn ambiguous_and_out_of_scope_numbers_stay_unchanged() {
-        for input in [
+        let unchanged = [
             "no one came",
             "one of them",
             "the one I want",
@@ -408,39 +443,9 @@ mod tests {
             "one thousand million",
             "zero hundred",
             "ten-zero",
-        ] {
-            assert_eq!(apply(input), input);
-        }
-    }
-
-    #[test]
-    fn number_boundaries() {
-        for (input, expected) in [
-            ("wait thirty seconds", "wait 30 seconds"),
-            ("five seconds", "5 seconds"),
-            ("a ten second pause", "a 10 second pause"),
-            ("the twenty-second", "the twenty-second"),
-            ("between one hundred and two hundred", "between 100 and 200"),
-            ("one thousand and two thousand", "1000 and 2000"),
-            ("between five and ten", "between 5 and 10"),
-            ("between ten and twenty percent", "between 10 and 20%"),
-            ("one and two", "one and 2"),
-            ("three hundred and zero", "300 and 0"),
-            ("twenty and five", "20 and 5"),
-            ("a ten percent discount", "a 10% discount"),
-            ("an eighty percent chance", "an 80% chance"),
-            ("a twenty-minute walk", "a 20-minute walk"),
-            ("a million times", "a million times"),
-            ("the twenty-first century", "the twenty-first century"),
-            ("two thirds", "two thirds"),
-            ("one hundred and twenty-first", "one hundred and twenty-first"),
-            ("three quarters", "three quarters"),
-            ("two halves", "two halves"),
-            ("twenty sixths", "twenty sixths"),
-            ("two hundred and five", "205"),
-            ("two thousand and ten", "2010"),
-        ] {
-            assert_eq!(apply(input), expected, "{input}");
+        ];
+        for input in unchanged {
+            assert_eq!(apply(input), input, "{input}");
         }
     }
 
