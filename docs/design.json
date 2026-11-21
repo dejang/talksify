@@ -2,7 +2,7 @@
   "format": "floorplan.design/1",
   "id": "local-whisperflow",
   "title": "Talksify",
-  "revision": 230,
+  "revision": 231,
   "parts": [
     {
       "id": "hotkey",
@@ -172,6 +172,27 @@
           "kind": "command",
           "signature": "fn with_default(model_dir: &Path, audio_device: Option<String>, on_level: Arc<dyn Fn(f32) + Send + Sync>) -> Result<Self, TranscriberError>",
           "confirmed": true
+        },
+        {
+          "id": "with-cleaner",
+          "name": "with_cleaner",
+          "kind": "command",
+          "signature": "fn with_cleaner(model_dir: &Path, cleaner: TextCleaner, make_source: impl Fn() -> A + Send + Sync + 'static, on_level: Arc<dyn Fn(f32) + Send + Sync>) -> Result<Self, TranscriberError>",
+          "confirmed": true
+        },
+        {
+          "id": "stop-transcribing-strict",
+          "name": "stop_transcribing_strict",
+          "kind": "command",
+          "signature": "fn stop_transcribing_strict(&mut self) -> Result<Transcript, TranscriberError>",
+          "errors": [
+            "TranscriberError::NotRunning",
+            "TranscriberError::Stop"
+          ],
+          "confirmed": true,
+          "post": [
+            "returns the raw STT text and cleaned text, propagating local LLM load or inference errors instead of falling back"
+          ]
         }
       ],
       "state": [
@@ -439,19 +460,70 @@
       "kind": "module",
       "name": "LLM PostProcessor",
       "confirmed": true,
-      "responsibility": "The LLM PostProcessor incorporates the model running on mistral-rs. We'll prompt and wait for the response. Applies writing conventions after cleanup: digits for numbers, N% for percentages, .ext for spoken file extensions.",
+      "responsibility": "The LLM PostProcessor incorporates the local GGUF model running on mistral-rs. Resolves local GGUF paths via canonicalization without lossy UTF-8 conversion or remote Hugging Face fallback, warms the model, prompts and waits for the response, and applies writing conventions after cleanup: digits for numbers, N% for percentages, .ext for spoken file extensions.",
       "operations": [
+        {
+          "id": "new",
+          "kind": "command",
+          "signature": "fn new(model_dir: &Path) -> Self",
+          "confirmed": true,
+          "name": "new"
+        },
+        {
+          "id": "warm-up",
+          "kind": "command",
+          "signature": "fn warm_up(&mut self) -> Result<(), String>",
+          "confirmed": true,
+          "name": "warm_up"
+        },
+        {
+          "id": "is-ready",
+          "kind": "query",
+          "signature": "fn is_ready(&self) -> bool",
+          "confirmed": true,
+          "name": "is_ready"
+        },
         {
           "id": "op-1",
           "kind": "command",
-          "signature": "fn clean_transcript(raw: RawTranscript)",
+          "signature": "fn clean_transcript(&self, raw: &RawTranscript) -> String",
           "confirmed": true,
           "name": "clean_transcript"
+        },
+        {
+          "id": "try-clean-transcript",
+          "kind": "command",
+          "signature": "fn try_clean_transcript(&self, raw: &RawTranscript) -> Result<String, String>",
+          "confirmed": true,
+          "name": "try_clean_transcript"
         }
       ],
       "state": [],
       "transitions": [],
-      "failures": [],
+      "failures": [
+        {
+          "id": "unrepresentable-model-path",
+          "trigger": "error",
+          "what": "A local GGUF model cannot be resolved or its canonical path is not valid UTF-8 for mistral-rs",
+          "detectedBy": "warm_up",
+          "recovery": {
+            "strategy": "fail",
+            "detail": "Return Err and record the failure internally without logging, lossy conversion, or remote lookup so callers can abort explicitly or log once on the fallback path."
+          },
+          "confirmed": true
+        },
+        {
+          "id": "inference-error",
+          "trigger": "error",
+          "what": "Local LLM chat inference fails, returns no usable transcript text, or ends truncated (finish_reason \"length\" or other non-\"stop\" reason) after model startup",
+          "detectedBy": "try_clean_transcript / clean_transcript",
+          "recovery": {
+            "strategy": "fallback",
+            "detail": "try_clean_transcript returns Err so strict callers (folder/dump/replay/quality eval) fail without scoring fallback or truncated text; clean_transcript preserves ordinary cleanup behavior (falling back to rule-based cleanup on errors/empty output and keeping partial text on length caps)."
+          },
+          "confirmed": true
+        }
+      ],
       "code": {
         "path": "src-tauri/core/src/llm_postprocessor.rs",
         "symbol": "LlmPostProcessor",
@@ -624,11 +696,63 @@
       }
     },
     {
+      "id": "text-cleaner",
+      "kind": "module",
+      "name": "TextCleaner",
+      "confirmed": true,
+      "responsibility": "Public text-only cleanup facade over the internal LLM PostProcessor. Loads and warms the local LLM from a model directory (logging load failures once in new and returning them unlogged from try_new), exposes readiness, and cleans a raw transcript string through the same pipeline used by Transcriber — either with ordinary rule-based fallback (clean) or propagating load/inference errors (try_clean) for strict callers such as talksify-cli folder, --dump-raw, and --replay runs.",
+      "operations": [
+        {
+          "id": "new",
+          "name": "new",
+          "kind": "command",
+          "signature": "fn new(model_dir: &Path) -> Self",
+          "confirmed": true
+        },
+        {
+          "id": "try-new",
+          "name": "try_new",
+          "kind": "command",
+          "signature": "fn try_new(model_dir: &Path) -> Result<Self, String>",
+          "confirmed": true
+        },
+        {
+          "id": "is-ready",
+          "name": "is_ready",
+          "kind": "query",
+          "signature": "fn is_ready(&self) -> bool",
+          "confirmed": true
+        },
+        {
+          "id": "clean",
+          "name": "clean",
+          "kind": "command",
+          "signature": "fn clean(&self, raw: &str) -> String",
+          "confirmed": true
+        },
+        {
+          "id": "try-clean",
+          "name": "try_clean",
+          "kind": "command",
+          "signature": "fn try_clean(&self, raw: &str) -> Result<String, String>",
+          "confirmed": true
+        }
+      ],
+      "state": [],
+      "transitions": [],
+      "failures": [],
+      "code": {
+        "path": "src-tauri/core/src/text_cleaner.rs",
+        "symbol": "TextCleaner",
+        "language": "rust"
+      }
+    },
+    {
       "id": "cli",
       "kind": "module",
       "name": "talksify-cli",
       "confirmed": true,
-      "responsibility": "Transcribes a WAV file from the command line and prints the cleaned transcript. Given a folder, checks each WAV's cleaned transcript against the .txt with the same name and reports the error rate over words, punctuation and line breaks. Scores the raw STT text as well as the cleaned text, splits errors into case, punctuation, line breaks and words, and times the wait after stop.",
+      "responsibility": "Transcribes a WAV file from the command line and prints the cleaned transcript. Given a folder, checks each WAV's raw and cleaned transcripts against the .txt with the same name using strict cleanup (propagating local LLM load or inference errors instead of scoring fallback) and reports both exact (case, punctuation, line breaks, words) and normalized content/word-only (substitutions, deletions, insertions) error rates, a >60 s recordings breakdown, separate exact worse and content worse file lists, and wait latency after stop. Supports --dump-raw <path.json> in folder mode to write [{ file, duration_secs, expected, raw }] (failing without publishing if strict cleanup fails) and --replay <path.json> to skip audio/STT and run TextCleaner::try_clean with identical reporting (failing nonzero without scoring failed entries).",
       "operations": [],
       "state": [],
       "transitions": [],
@@ -666,7 +790,8 @@
         "module-4",
         "module-5",
         "audio-processor",
-        "audio-source"
+        "audio-source",
+        "text-cleaner"
       ],
       "confirmed": true
     },
@@ -738,7 +863,19 @@
       "to": "module-5",
       "kind": "call",
       "operations": [
-        "module-5.op-1"
+        "module-5.op-1",
+        "module-5.try-clean-transcript"
+      ],
+      "failures": [],
+      "confirmed": true
+    },
+    {
+      "id": "transcriber-text-cleaner",
+      "from": "module-1",
+      "to": "text-cleaner",
+      "kind": "call",
+      "operations": [
+        "text-cleaner.new"
       ],
       "failures": [],
       "confirmed": true
@@ -824,8 +961,37 @@
       "operations": [
         "module-1.op-1",
         "module-1.op-2",
+        "module-1.stop-transcribing-strict",
         "module-1.op-3",
-        "module-1.op-4"
+        "module-1.op-4",
+        "module-1.with-cleaner"
+      ],
+      "failures": [],
+      "confirmed": true
+    },
+    {
+      "id": "cli-text-cleaner",
+      "from": "cli",
+      "to": "text-cleaner",
+      "kind": "call",
+      "operations": [
+        "text-cleaner.try-new",
+        "text-cleaner.try-clean"
+      ],
+      "failures": [],
+      "confirmed": true
+    },
+    {
+      "id": "text-cleaner-llm",
+      "from": "text-cleaner",
+      "to": "module-5",
+      "kind": "call",
+      "operations": [
+        "module-5.new",
+        "module-5.warm-up",
+        "module-5.is-ready",
+        "module-5.op-1",
+        "module-5.try-clean-transcript"
       ],
       "failures": [],
       "confirmed": true
@@ -2082,6 +2248,10 @@
       "file-source": {
         "x": 1650,
         "y": 550
+      },
+      "text-cleaner": {
+        "x": 1050,
+        "y": 778
       }
     },
     "boundaries": {

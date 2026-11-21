@@ -6,7 +6,36 @@ use cpal::{
 };
 use rubato::{FftFixedIn, Resampler};
 
-pub(crate) type HeapProd<T> = rtrb::Producer<T>;
+/// Ring-buffer producer for pushing captured or resampled audio without blocking.
+pub(crate) struct HeapProd<T>(rtrb::Producer<T>);
+
+impl<T> HeapProd<T> {
+    pub(crate) fn ring_buffer(capacity: usize) -> (Self, HeapCons<T>) {
+        let (tx, rx) = rtrb::RingBuffer::new(capacity);
+        (Self(tx), rx)
+    }
+
+    pub(crate) fn push(&mut self, value: T) -> Result<(), rtrb::PushError<T>> {
+        self.0.push(value)
+    }
+
+    /// Pushes as many items as fit in the ring buffer and returns how many were dropped.
+    pub(crate) fn push_slice(&mut self, items: &[T]) -> usize
+    where
+        T: Copy,
+    {
+        let fits = self.0.slots().min(items.len());
+        if let Ok(chunk) = self.0.write_chunk_uninit(fits) {
+            chunk.fill_from_iter(items.iter().copied());
+        }
+        items.len() - fits
+    }
+
+    pub(crate) fn is_abandoned(&self) -> bool {
+        self.0.is_abandoned()
+    }
+}
+
 pub type HeapCons<T> = rtrb::Consumer<T>;
 
 #[derive(Debug, thiserror::Error)]
@@ -79,7 +108,7 @@ impl AudioSource for AudioDevice {
 
         let capacity =
             format.sample_rate as usize * usize::from(format.channels) * self.ring_seconds;
-        let (producer, consumer) = rtrb::RingBuffer::new(capacity);
+        let (producer, consumer) = HeapProd::ring_buffer(capacity);
         let stream = match config.sample_format() {
             SampleFormat::F32 => build_stream::<f32>(&device, &stream_config, producer),
             SampleFormat::F64 => build_stream::<f64>(&device, &stream_config, producer),
@@ -390,5 +419,17 @@ mod tests {
         // A 0.1-amplitude sine is about -23 dBFS, so roughly 70% of the meter.
         assert!(meter.push(&tone).is_some_and(|l| (0.6..0.8).contains(&l)));
         assert!(meter.push(&[1.0; 480]).is_some_and(|l| l > 0.99));
+    }
+
+    #[test]
+    fn heap_prod_push_slice_writes_available_and_counts_drops() {
+        let (mut tx, mut rx) = HeapProd::ring_buffer(4);
+        assert_eq!(tx.push_slice(&[1i32, 2, 3]), 0);
+        assert_eq!(tx.push_slice(&[4, 5, 6]), 2);
+        let mut drained = Vec::new();
+        while let Ok(sample) = rx.pop() {
+            drained.push(sample);
+        }
+        assert_eq!(drained, vec![1, 2, 3, 4]);
     }
 }
