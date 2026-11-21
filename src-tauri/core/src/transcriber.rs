@@ -1,17 +1,18 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{RecvTimeoutError, channel};
+use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
-use std::thread::Builder;
-use std::thread::JoinHandle;
+use std::thread::{Builder, JoinHandle};
 
-use crate::audio_device::{AudioDevice, AudioProcessor, HeapCons, HeapProd, InputFormat, LevelMeter};
+use crate::audio_device::{AudioDevice, AudioProcessor, HeapProd, InputFormat, LevelMeter};
 use crate::audio_source::AudioSource;
 use crate::llm_postprocessor::LlmPostProcessor;
 use crate::parakeet_stt::ParakeetStt;
 use crate::raw_transcript::{RawTranscript, Transcript};
 use crate::recording;
 use crate::stt::Stt;
+use crate::stt_worker::{SttCommand, SttWorker};
+use crate::text_cleaner::TextCleaner;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TranscriberError {
@@ -25,11 +26,39 @@ pub enum TranscriberError {
     Stop(String),
 }
 
-enum SttCommand {
-    /// Audio for the recording that is starting, replacing the previous recording's buffer.
-    Audio(HeapCons<f32>),
-    Flush(std::sync::mpsc::Sender<()>),
-    Shutdown,
+struct WavRecording {
+    tx: HeapProd<f32>,
+    writer: JoinHandle<()>,
+    dropped: usize,
+}
+
+impl WavRecording {
+    fn start(path: PathBuf, fmt: InputFormat) -> Option<Self> {
+        let cap = fmt.sample_rate as usize * usize::from(fmt.channels) * 10;
+        let (tx, rx) = HeapProd::ring_buffer(cap);
+        Builder::new()
+            .name("audio-writer".into())
+            .spawn(move || recording::write_wav(path, fmt, rx))
+            .inspect_err(|e| log::error!("[recording] writer thread: {e}"))
+            .ok()
+            .map(|writer| Self {
+                tx,
+                writer,
+                dropped: 0,
+            })
+    }
+
+    fn write(&mut self, audio: &[f32]) {
+        self.dropped += self.tx.push_slice(audio);
+    }
+
+    fn finish(self) {
+        drop(self.tx);
+        let _ = self.writer.join();
+        if self.dropped > 0 {
+            log::warn!("[recording] dropped {} samples", self.dropped);
+        }
+    }
 }
 
 pub struct Transcriber<A: AudioSource = AudioDevice> {
@@ -71,16 +100,23 @@ impl<A: AudioSource + 'static> Transcriber<A> {
         make_source: impl Fn() -> A + Send + Sync + 'static,
         on_level: Arc<dyn Fn(f32) + Send + Sync>,
     ) -> Result<Self, TranscriberError> {
+        let cleaner = TextCleaner::new(model_dir);
+        Self::with_cleaner(model_dir, cleaner, make_source, on_level)
+    }
+
+    /// Builds a transcriber using a pre-initialized [`TextCleaner`].
+    /// # Errors
+    /// Returns an initialization error if STT model loading or the STT thread fails.
+    pub fn with_cleaner(
+        model_dir: &Path,
+        cleaner: TextCleaner,
+        make_source: impl Fn() -> A + Send + Sync + 'static,
+        on_level: Arc<dyn Fn(f32) + Send + Sync>,
+    ) -> Result<Self, TranscriberError> {
         let mut stt = ParakeetStt::new(model_dir)
             .ok_or_else(|| TranscriberError::Init("failed to load STT model".into()))?;
+        let llm = cleaner.into_llm();
         let stt_rate = stt.sample_rate();
-
-        let mut llm = LlmPostProcessor::new(model_dir);
-        llm.warm_up();
-        if !llm.is_ready() {
-            log::warn!("[transcriber] LLM unavailable; transcripts get basic cleanup only");
-        }
-
         let raw_transcript = Arc::new(Mutex::new(RawTranscript::default()));
 
         stt.subscribe(Box::new({
@@ -94,13 +130,11 @@ impl<A: AudioSource + 'static> Transcriber<A> {
 
         let (stt_tx, stt_rx) = channel::<SttCommand>();
         let shutdown = Arc::new(AtomicBool::new(false));
-        let shutdown_for_thread = Arc::clone(&shutdown);
+        let worker = SttWorker::new(stt, stt_rx, Arc::clone(&shutdown));
 
         let stt_handle = Builder::new()
             .name("stt-warm".into())
-            .spawn(move || {
-                stt_warm_loop(stt, &stt_rx, &shutdown_for_thread);
-            })
+            .spawn(move || worker.run())
             .map_err(|e| TranscriberError::Init(format!("stt thread: {e}")))?;
 
         Ok(Self {
@@ -119,14 +153,17 @@ impl<A: AudioSource + 'static> Transcriber<A> {
 
     /// # Errors
     /// Returns an error if already recording or a worker cannot start.
-    pub fn start_transcribing(&mut self, save_audio_to: Option<PathBuf>) -> Result<(), TranscriberError> {
+    pub fn start_transcribing(
+        &mut self,
+        save_audio_to: Option<PathBuf>,
+    ) -> Result<(), TranscriberError> {
         if self.is_recording.load(Ordering::Relaxed) {
             return Err(TranscriberError::AlreadyRunning);
         }
 
         log::info!("[transcriber] starting");
         // 10 s of audio, so the STT thread can fall behind during a long transcription.
-        let (mut audio_tx, audio_rx) = rtrb::RingBuffer::new(self.stt_rate as usize * 10);
+        let (mut audio_tx, audio_rx) = HeapProd::ring_buffer(self.stt_rate as usize * 10);
         self.stt_tx
             .send(SttCommand::Audio(audio_rx))
             .map_err(|e| TranscriberError::Init(format!("stt send: {e}")))?;
@@ -157,7 +194,7 @@ impl<A: AudioSource + 'static> Transcriber<A> {
                     let _ = device.stop_capture();
                     return;
                 };
-                let mut rec = save_audio_to.and_then(|path| spawn_writer(path, format));
+                let mut rec = save_audio_to.and_then(|path| WavRecording::start(path, format));
 
                 let mut total_samples: u64 = 0;
                 let mut dropped = 0;
@@ -178,8 +215,8 @@ impl<A: AudioSource + 'static> Transcriber<A> {
                                 }
                             }
                             total_samples += count as u64;
-                            if let Some((tx, _, rec_dropped)) = &mut rec {
-                                *rec_dropped += send_audio(tx, &buf[..count]);
+                            if let Some(recording) = &mut rec {
+                                recording.write(&buf[..count]);
                             }
                             let audio = processor.process(&buf[..count]);
                             if let Some(level) = meter.push(audio) {
@@ -189,7 +226,7 @@ impl<A: AudioSource + 'static> Transcriber<A> {
                                 log::info!("[audio] {total_samples} samples captured");
                                 last_log = std::time::Instant::now();
                             }
-                            dropped += send_audio(&mut audio_tx, audio);
+                            dropped += audio_tx.push_slice(audio);
                             if audio_tx.is_abandoned() {
                                 break;
                             }
@@ -206,15 +243,15 @@ impl<A: AudioSource + 'static> Transcriber<A> {
                     remaining.push(sample);
                 }
                 log::info!("[audio] draining {} remaining samples", remaining.len());
-                if let Some((tx, _, rec_dropped)) = &mut rec {
-                    *rec_dropped += send_audio(tx, &remaining);
+                if let Some(recording) = &mut rec {
+                    recording.write(&remaining);
                 }
                 for block in remaining.chunks(buf.len()) {
-                    dropped += send_audio(&mut audio_tx, processor.process(block));
+                    dropped += audio_tx.push_slice(processor.process(block));
                 }
-                dropped += send_audio(&mut audio_tx, processor.finish());
-                if let Some((tx, writer, n)) = rec {
-                    finish_writer(tx, writer, n);
+                dropped += audio_tx.push_slice(processor.finish());
+                if let Some(recording) = rec {
+                    recording.finish();
                 }
                 if dropped > 0 {
                     log::warn!("[audio] STT fell behind, dropped {dropped} samples");
@@ -229,9 +266,7 @@ impl<A: AudioSource + 'static> Transcriber<A> {
         Ok(())
     }
 
-    /// # Errors
-    /// Returns an error if idle or flushing the transcript fails.
-    pub fn stop_transcribing(&mut self) -> Result<Transcript, TranscriberError> {
+    fn finish_recording(&mut self) -> Result<RawTranscript, TranscriberError> {
         if !self.is_recording.load(Ordering::Relaxed) {
             return Err(TranscriberError::NotRunning);
         }
@@ -239,20 +274,17 @@ impl<A: AudioSource + 'static> Transcriber<A> {
         log::info!("[transcriber] stopping");
         self.is_recording.store(false, Ordering::Relaxed);
 
-        // 1. Join audio thread (drains ring buffer, sends last samples to STT)
         if let Some(handle) = self.audio_handle.take() {
             let _ = handle.join();
         }
 
-        // 2. Send Flush with reply channel — STT drains the audio ring buffer (complete, since
-        //    the audio thread has exited), flushes, then signals done. Blocking recv, no timeout.
+        // STT drains the completed ring buffer, flushes, then signals done.
         let (done_tx, done_rx) = channel::<()>();
         self.stt_tx
             .send(SttCommand::Flush(done_tx))
             .map_err(|e| TranscriberError::Stop(format!("stt send: {e}")))?;
         let _ = done_rx.recv();
 
-        // 3. All STT work is done. Read transcript.
         let raw = {
             let mut transcript = self
                 .raw_transcript
@@ -268,12 +300,35 @@ impl<A: AudioSource + 'static> Transcriber<A> {
             raw.sentences.len(),
             raw.sentences
         );
-        let cleaned = self.llm.clean_transcript(&raw);
+        Ok(raw)
+    }
+
+    fn finalize_transcript(raw: &RawTranscript, cleaned: String) -> Transcript {
         log::info!("[transcriber] cleaned: {cleaned:?}");
-        Ok(Transcript {
+        Transcript {
             raw: raw.to_joined_string(),
             cleaned,
-        })
+        }
+    }
+
+    /// # Errors
+    /// Returns an error if idle or flushing the transcript fails.
+    pub fn stop_transcribing(&mut self) -> Result<Transcript, TranscriberError> {
+        let raw = self.finish_recording()?;
+        let cleaned = self.llm.clean_transcript(&raw);
+        Ok(Self::finalize_transcript(&raw, cleaned))
+    }
+
+    /// Stops recording and propagates local LLM load or inference errors instead of falling back.
+    /// # Errors
+    /// Returns an error if idle, flushing fails, or LLM cleanup fails.
+    pub fn stop_transcribing_strict(&mut self) -> Result<Transcript, TranscriberError> {
+        let raw = self.finish_recording()?;
+        let cleaned = self
+            .llm
+            .try_clean_transcript(&raw)
+            .map_err(TranscriberError::Stop)?;
+        Ok(Self::finalize_transcript(&raw, cleaned))
     }
 
     #[must_use]
@@ -291,81 +346,15 @@ impl<A: AudioSource> Drop for Transcriber<A> {
     }
 }
 
-/// Pushes `audio` into the STT thread's ring buffer; returns how many samples did not fit.
-fn send_audio(audio_tx: &mut HeapProd<f32>, audio: &[f32]) -> usize {
-    let fits = audio_tx.slots().min(audio.len());
-    if let Ok(chunk) = audio_tx.write_chunk_uninit(fits) {
-        chunk.fill_from_iter(audio.iter().copied());
-    }
-    audio.len() - fits
-}
-
-fn spawn_writer(path: PathBuf, fmt: InputFormat) -> Option<(HeapProd<f32>, JoinHandle<()>, usize)> {
-    let cap = fmt.sample_rate as usize * usize::from(fmt.channels) * 10;
-    let (tx, rx) = rtrb::RingBuffer::new(cap);
-    Builder::new()
-        .name("audio-writer".into())
-        .spawn(move || recording::write_wav(path, fmt, rx))
-        .inspect_err(|e| log::error!("[recording] writer thread: {e}"))
-        .ok()
-        .map(|writer| (tx, writer, 0))
-}
-
-fn finish_writer(tx: HeapProd<f32>, writer: JoinHandle<()>, n: usize) {
-    drop(tx);
-    let _ = writer.join();
-    if n > 0 {
-        log::warn!("[recording] dropped {n} samples");
-    }
-}
-
-fn stt_warm_loop(
-    mut stt: ParakeetStt,
-    rx: &std::sync::mpsc::Receiver<SttCommand>,
-    shutdown: &AtomicBool,
-) {
-    let mut audio: Option<HeapCons<f32>> = None;
-    while !shutdown.load(Ordering::Relaxed) {
-        // While recording, wake every 10 ms to pick up new audio; otherwise wait for a command.
-        let command = if audio.is_some() {
-            rx.recv_timeout(std::time::Duration::from_millis(10))
-        } else {
-            rx.recv().map_err(RecvTimeoutError::from)
-        };
-        if let Some(audio_rx) = &mut audio
-            && let Ok(chunk) = audio_rx.read_chunk(audio_rx.slots())
-        {
-            let (first, second) = chunk.as_slices();
-            stt.push_audio(first);
-            stt.push_audio(second);
-            chunk.commit_all();
-        }
-        match command {
-            Ok(SttCommand::Audio(audio_rx)) => {
-                audio = Some(audio_rx);
-            }
-            Ok(SttCommand::Flush(done_tx)) => {
-                stt.flush();
-                audio = None;
-                let _ = done_tx.send(());
-            }
-            Err(RecvTimeoutError::Timeout) => {}
-            Ok(SttCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => {
-                break;
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::parakeet_stt::tests::{say, synthesize, synthesize_in};
-    use crate::{AudioError, AudioSource, HeapCons, InputFormat, Transcriber};
-    use cpal::Sample;
-    use std::path::Path;
-    use std::sync::{Arc, Mutex};
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
+
+    use cpal::Sample;
+
+    use super::*;
+    use crate::parakeet_stt::tests::{say, synthesize, synthesize_in};
+    use crate::{AudioError, HeapCons};
 
     #[derive(Clone)]
     struct TestSource {
@@ -393,90 +382,68 @@ mod tests {
         }
     }
 
-    // Only supply audio and observe the public lifecycle and final transcript.
-    fn test_transcriber() -> (Transcriber<TestSource>, Arc<Mutex<TestSource>>) {
-        let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
-        let input = Arc::new(Mutex::new(TestSource {
-            samples: Arc::from([]),
-            format: InputFormat {
-                sample_rate: 16_000,
-                channels: 1,
-            },
-            started: Arc::new(AtomicBool::new(false)),
-        }));
-        let source = Arc::clone(&input);
-        let transcriber = Transcriber::new(
-            &models,
-            move || source.lock().unwrap().clone(),
-            Arc::new(|_| {}),
-        )
-        .unwrap();
-        (transcriber, input)
+    struct TranscriberHarness {
+        transcriber: Transcriber<TestSource>,
+        input: Arc<Mutex<TestSource>>,
     }
 
-    fn transcribe(
-        transcriber: &mut Transcriber<TestSource>,
-        input: &Mutex<TestSource>,
-        samples: impl Into<Arc<[f32]>>,
-        format: InputFormat,
-    ) -> String {
-        let ready = {
-            let mut source = input.lock().unwrap();
-            source.samples = samples.into();
-            source.format = format;
-            source.started.store(false, Ordering::Release);
-            Arc::clone(&source.started)
-        };
-        assert!(transcriber.stop_transcribing().is_err());
-        transcriber.start_transcribing(None).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !ready.load(Ordering::Acquire) {
-            assert!(Instant::now() < deadline, "audio source did not start");
-            std::thread::sleep(Duration::from_millis(1));
+    impl TranscriberHarness {
+        fn new() -> Self {
+            let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
+            let input = Arc::new(Mutex::new(TestSource {
+                samples: Arc::from([]),
+                format: InputFormat {
+                    sample_rate: 16_000,
+                    channels: 1,
+                },
+                started: Arc::new(AtomicBool::new(false)),
+            }));
+            let source = Arc::clone(&input);
+            let transcriber = Transcriber::new(
+                &models,
+                move || source.lock().unwrap().clone(),
+                Arc::new(|_| {}),
+            )
+            .unwrap();
+            Self { transcriber, input }
         }
-        assert!(transcriber.is_transcribing());
-        assert!(transcriber.start_transcribing(None).is_err());
-        let text = transcriber.stop_transcribing().unwrap();
-        assert!(!transcriber.is_transcribing());
-        text.cleaned.to_lowercase()
+
+        fn transcribe(&mut self, samples: impl Into<Arc<[f32]>>, format: InputFormat) -> String {
+            let ready = {
+                let mut source = self.input.lock().unwrap();
+                source.samples = samples.into();
+                source.format = format;
+                source.started.store(false, Ordering::Release);
+                Arc::clone(&source.started)
+            };
+            assert!(self.transcriber.stop_transcribing().is_err());
+            self.transcriber.start_transcribing(None).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !ready.load(Ordering::Acquire) {
+                assert!(Instant::now() < deadline, "audio source did not start");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            assert!(self.transcriber.is_transcribing());
+            assert!(self.transcriber.start_transcribing(None).is_err());
+            let text = self.transcriber.stop_transcribing().unwrap();
+            assert!(!self.transcriber.is_transcribing());
+            text.cleaned.to_lowercase()
+        }
     }
 
     #[test]
     #[ignore = "loads the bundled STT and LLM models and uses macOS `say`"]
     fn transcribes_other_languages() {
-        let (mut transcriber, input) = test_transcriber();
+        let mut harness = TranscriberHarness::new();
+        let format = InputFormat { sample_rate: 16_000, channels: 1 };
         let cases: &[(&str, &str, &[&str])] = &[
-            (
-                "Anna",
-                "Morgen treffen wir uns um zehn Uhr im Büro.",
-                &["morgen", "uns um", "büro"],
-            ),
-            (
-                "Jacques",
-                "Demain, nous avons une réunion avec toute l'équipe.",
-                &["demain", "équipe"],
-            ),
-            (
-                "Mónica",
-                "Mañana enviaré el informe al cliente.",
-                &["mañana", "informe"],
-            ),
-            (
-                "Alice",
-                "Domani mattina finiamo il progetto.",
-                &["domani", "progetto"],
-            ),
+            ("Anna", "Morgen treffen wir uns um zehn Uhr im Büro.", &["morgen", "uns um", "büro"]),
+            ("Jacques", "Demain, nous avons une réunion avec toute l'équipe.", &["demain", "équipe"]),
+            ("Mónica", "Mañana enviaré el informe al cliente.", &["mañana", "informe"]),
+            ("Alice", "Domani mattina finiamo il progetto.", &["domani", "progetto"]),
         ];
         for (voice, speech, words) in cases {
-            let out = transcribe(
-                &mut transcriber,
-                &input,
-                synthesize_in(Some(voice), speech),
-                InputFormat {
-                    sample_rate: 16_000,
-                    channels: 1,
-                },
-            );
+            let out = harness.transcribe(synthesize_in(Some(voice), speech), format);
             for word in *words {
                 assert!(out.contains(word), "{voice}: {out:?}, missing {word:?}");
             }
@@ -486,7 +453,7 @@ mod tests {
     #[test]
     #[ignore = "loads the bundled STT and LLM models and uses macOS `say`"]
     fn transcribes_common_device_formats() {
-        let (mut transcriber, input) = test_transcriber();
+        let mut harness = TranscriberHarness::new();
         let mut mono = Vec::new();
         let mut samples = Vec::new();
         for (data_format, sample_rate, channels) in [
@@ -518,12 +485,11 @@ mod tests {
                 );
             }
             samples.clear();
-            samples.extend(mono.iter().flat_map(|&s| {
-                [s, 0.5 * s].into_iter().take(usize::from(channels))
-            }));
-            let out = transcribe(
-                &mut transcriber,
-                &input,
+            samples.extend(
+                mono.iter()
+                    .flat_map(|&s| [s, 0.5 * s].into_iter().take(usize::from(channels))),
+            );
+            let out = harness.transcribe(
                 samples.as_slice(),
                 InputFormat {
                     sample_rate,
@@ -538,7 +504,7 @@ mod tests {
     #[test]
     #[ignore = "loads the bundled STT, VAD and LLM models and uses macOS `say`"]
     fn speech_to_clean_text() {
-        let (mut transcriber, input) = test_transcriber();
+        let mut harness = TranscriberHarness::new();
         let cases: &[(&str, &[&str], &[&str])] = &[
             (
                 "So the plan is. One, we refactor the parser. Two, we add more tests. \
@@ -568,13 +534,15 @@ mod tests {
                 &["i think we should push the release to monday"],
                 &[],
             ),
-            ("The problem is this. The build takes way too long on CI.", &["this: the build"], &[]),
+            (
+                "The problem is this. The build takes way too long on CI.",
+                &["this: the build"],
+                &[],
+            ),
         ];
 
         for (speech, must, must_not) in cases {
-            let out = transcribe(
-                &mut transcriber,
-                &input,
+            let out = harness.transcribe(
                 synthesize(speech),
                 InputFormat {
                     sample_rate: 16_000,

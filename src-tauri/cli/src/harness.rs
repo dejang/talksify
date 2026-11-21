@@ -1,238 +1,352 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::borrow::Cow;
+use std::path::Path;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{Duration, Instant};
 
-use talksify_core::{InputFormat, Transcriber};
+use talksify_core::TextCleaner;
 
-use crate::file_source::{FileSource, read_wav};
-use crate::{play_file, score};
+use crate::corpus::{RecordingFolder, TranscribedSample, WavPair, WavRunner};
+use crate::dump::{RawEntry, RecordingName, StagedDump};
+use crate::report::{FileSample, HarnessReport};
 
-type WavPair = (PathBuf, PathBuf);
-
-/// The WAV/TXT pairs in this folder, sorted by name, and WAVs without a TXT.
-pub(crate) fn pairs(folder: &Path) -> std::io::Result<(Vec<WavPair>, Vec<PathBuf>)> {
-    let mut paired = Vec::new();
-    let mut skipped = Vec::new();
-    for entry in fs::read_dir(folder)? {
-        let path = entry?.path();
-        if path.extension().is_some_and(|ext| ext == "wav") && path.is_file() {
-            let text = path.with_extension("txt");
-            if text.is_file() {
-                paired.push((path, text));
-            } else {
-                skipped.push(path);
-            }
-        }
-    }
-    paired.sort();
-    skipped.sort();
-    Ok((paired, skipped))
+/// Corpus item evaluated by [`Harness`] with an unambiguous report/dump name.
+pub(crate) trait SampleItem {
+    fn sample_name(&self) -> Cow<'_, RecordingName>;
 }
 
-pub(crate) fn run(folder: &Path, models: &Path) -> ExitCode {
-    let (paired, skipped) = match pairs(folder) {
-        Ok(pairs) => pairs,
-        Err(error) => {
-            log::error!("error: cannot read {}: {error}", folder.display());
-            return ExitCode::FAILURE;
+/// Evaluates one corpus item (a WAV/TXT pair or dumped raw entry) into a scored sample.
+pub(crate) trait SampleRunner<T> {
+    fn run_sample(&mut self, item: &T) -> Result<TranscribedSample, String>;
+}
+
+struct FolderPlan {
+    corpus: RecordingFolder,
+    staged_dump: Option<StagedDump>,
+}
+
+impl FolderPlan {
+    fn prepare(folder: &Path, dump_raw: Option<&Path>) -> Result<Self, String> {
+        let corpus = RecordingFolder::scan(folder)
+            .map_err(|error| format!("cannot read {}: {error}", folder.display()))?;
+        if corpus.paired.is_empty() {
+            return Err(format!(
+                "no .wav files with a matching .txt in {}",
+                folder.display()
+            ));
         }
-    };
-    if paired.is_empty() {
-        log::error!(
-            "error: no .wav files with a matching .txt in {}",
-            folder.display()
-        );
-        return ExitCode::FAILURE;
+        let staged_dump = dump_raw.map(StagedDump::prepare).transpose()?;
+        Ok(Self {
+            corpus,
+            staged_dump,
+        })
     }
 
-    let audio = Arc::new(Mutex::new((
-        Arc::<[f32]>::from([]),
-        InputFormat {
-            sample_rate: 16_000,
-            channels: 1,
-        },
-    )));
-    let finished = Arc::new(AtomicBool::new(false));
-    let source_audio = Arc::clone(&audio);
-    let source_finished = Arc::clone(&finished);
-    let mut transcriber = match Transcriber::new(
-        models,
-        move || {
-            let (samples, format) = &*source_audio.lock().unwrap_or_else(PoisonError::into_inner);
-            FileSource::new(Arc::clone(samples), *format, Arc::clone(&source_finished))
-        },
-        Arc::new(|_| {}),
+    fn execute(self, runner: &mut impl SampleRunner<WavPair>) -> ExitCode {
+        let mut harness = Harness::default();
+        harness.record_skipped(self.corpus.skipped_names());
+        harness.evaluate(&self.corpus.paired, runner, self.staged_dump);
+        harness.finish()
+    }
+}
+
+/// Shared harness state and folder WAV/TXT evaluation runner.
+#[derive(Default)]
+pub(crate) struct Harness {
+    report: HarnessReport,
+    failed: bool,
+}
+
+impl Harness {
+    pub(crate) fn run_folder(
+        folder: &Path,
+        models: &Path,
+        dump_raw: Option<&Path>,
+    ) -> Result<ExitCode, String> {
+        let plan = FolderPlan::prepare(folder, dump_raw)?;
+        let cleaner = TextCleaner::try_new(models)?;
+        let mut runner = WavRunner::new(models, cleaner)?;
+        Ok(plan.execute(&mut runner))
+    }
+
+    pub(crate) fn record_skipped(&mut self, files: impl IntoIterator<Item = RecordingName>) {
+        self.report.record_skipped(files);
+    }
+
+    pub(crate) fn evaluate<T: SampleItem>(
+        &mut self,
+        items: &[T],
+        runner: &mut impl SampleRunner<T>,
+        mut staged_dump: Option<StagedDump>,
     ) {
-        Ok(transcriber) => transcriber,
-        Err(error) => {
-            log::error!("error: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    let mut raw_errors = score::Errors::default();
-    let mut cleaned_errors = score::Errors::default();
-    let mut total_expected = 0;
-    let mut waits = Vec::new();
-    let mut worse = Vec::new();
-    let mut failed = false;
-    for (wav, text) in paired {
-        let name = wav.file_name().unwrap_or_default().to_string_lossy();
-        let result = (|| {
-            let data = read_wav(&wav).map_err(|e| format!("cannot read {}: {e}", wav.display()))?;
-            let expected = fs::read_to_string(&text)
-                .map_err(|e| format!("cannot read {}: {e}", text.display()))?;
-            *audio.lock().unwrap_or_else(PoisonError::into_inner) = data;
-            finished.store(false, Ordering::Release);
-            play_file(&mut transcriber, &finished)?;
-            let stopped = Instant::now();
-            let output = transcriber.stop_transcribing().map_err(|e| e.to_string())?;
-            let wait = stopped.elapsed();
-            Ok::<_, String>((expected, output, wait))
-        })();
-        match result {
-            Ok((expected, output, wait)) => {
-                let expected = expected.trim();
-                let raw = output.raw.trim();
-                let cleaned = output.cleaned.trim();
-                let expected_tokens = score::tokens(expected);
-                let raw_score = score::errors(&expected_tokens, &score::tokens(raw));
-                let cleaned_score = score::errors(&expected_tokens, &score::tokens(cleaned));
-                let tokens = expected_tokens.len();
-                log::info!("{name}  wait {:.1} s", wait.as_secs_f64());
-                report("  raw    ", &raw_score, tokens);
-                report("  cleaned", &cleaned_score, tokens);
-                log::info!("  expected: {expected:?}");
-                log::info!("  raw:      {raw:?}");
-                log::info!("  got:      {cleaned:?}");
-                if cleaned_score.total() > raw_score.total() {
-                    worse.push(name.to_string());
+        for item in items {
+            let name = item.sample_name();
+            match runner.run_sample(item) {
+                Ok(sample) => {
+                    self.record_sample(&name, &sample);
+                    if let Some(staged) = staged_dump.as_mut() {
+                        staged.push(RawEntry {
+                            file: name.into_owned(),
+                            duration_secs: sample.duration_secs,
+                            expected: sample.expected.trim().to_string(),
+                            raw: sample.transcript.raw,
+                        });
+                    }
                 }
-                raw_errors.accumulate(&raw_score);
-                cleaned_errors.accumulate(&cleaned_score);
-                total_expected += tokens;
-                waits.push((wait, name.to_string()));
+                Err(error) => self.record_failure(&name, &error),
             }
-            Err(error) => {
-                log::error!("{name}  failed: {error}");
-                failed = true;
+        }
+        if let Some(staged) = staged_dump {
+            self.publish_dump(staged);
+        }
+    }
+
+    pub(crate) fn finish(self) -> ExitCode {
+        for line in self.report.to_string().lines() {
+            log::info!("{line}");
+        }
+        if self.failed {
+            ExitCode::FAILURE
+        } else {
+            ExitCode::SUCCESS
+        }
+    }
+
+    fn record_sample(&mut self, name: &RecordingName, sample: &TranscribedSample) {
+        let entry = self.report.record(&FileSample {
+            name,
+            duration_secs: sample.duration_secs,
+            expected: &sample.expected,
+            raw: &sample.transcript.raw,
+            cleaned: &sample.transcript.cleaned,
+            wait: sample.wait,
+        });
+        for line in entry.lines() {
+            log::info!("{line}");
+        }
+    }
+
+    fn record_failure(&mut self, name: &RecordingName, error: &str) {
+        log::error!("{}  failed: {error}", name.quoted());
+        self.failed = true;
+    }
+
+    fn publish_dump(&mut self, staged: StagedDump) {
+        let destination = staged.destination().to_path_buf();
+        if self.failed {
+            log::error!(
+                "skipping raw dump to {}: not all paired recordings succeeded",
+                destination.display()
+            );
+        } else {
+            match staged.publish() {
+                Ok(count) => log::info!(
+                    "wrote {count} raw transcripts to {}",
+                    destination.display()
+                ),
+                Err(error) => {
+                    log::error!("error: {error}");
+                    self.failed = true;
+                }
             }
         }
     }
-    report_overall(&raw_errors, &cleaned_errors, total_expected, &waits, &worse);
-    if !skipped.is_empty() {
-        let names: Vec<_> = skipped
-            .iter()
-            .map(|path| path.file_name().unwrap_or_default().to_string_lossy())
-            .collect();
-        log::info!("skipped, no .txt: {}", names.join(", "));
-    }
-    if failed {
-        ExitCode::FAILURE
-    } else {
-        ExitCode::SUCCESS
-    }
-}
-
-fn report_overall(
-    raw: &score::Errors,
-    cleaned: &score::Errors,
-    tokens: usize,
-    waits: &[(Duration, String)],
-    worse: &[String],
-) {
-    report("overall raw    ", raw, tokens);
-    report("overall cleaned", cleaned, tokens);
-    if let Some((longest, name)) = waits.iter().max_by_key(|(wait, _)| *wait) {
-        let sum: Duration = waits.iter().map(|(wait, _)| *wait).sum();
-        #[expect(clippy::cast_precision_loss, reason = "practical file counts fit f64")]
-        let average = sum.as_secs_f64() / waits.len() as f64;
-        log::info!(
-            "wait             average {average:.1} s, longest {:.1} s ({name})",
-            longest.as_secs_f64()
-        );
-    }
-    if !worse.is_empty() {
-        log::info!("cleanup made these worse: {}", worse.join(", "));
-    }
-}
-
-fn report(label: &str, errors: &score::Errors, tokens: usize) {
-    log::info!(
-        "{label}  {:.1}%  ({}/{tokens})  case {}  punctuation {}  line breaks {}  words {}",
-        score::rate(errors.total(), tokens),
-        errors.total(),
-        errors.case,
-        errors.punctuation,
-        errors.line_breaks,
-        errors.words
-    );
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    use talksify_core::Transcript;
+    use tempfile::TempDir;
+
     use super::*;
-    use std::sync::atomic::AtomicUsize;
+    use crate::dump::RawDump;
+    use crate::replay::ReplayHarness;
 
-    struct TempFolder(PathBuf);
+    struct FakeCorpus {
+        dir: TempDir,
+    }
 
-    impl TempFolder {
+    impl FakeCorpus {
         fn new() -> Self {
-            static NEXT: AtomicUsize = AtomicUsize::new(0);
-            let folder = std::env::temp_dir().join(format!(
-                "talksify-harness-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::create_dir(&folder).unwrap();
-            Self(folder)
+            Self {
+                dir: TempDir::new().unwrap(),
+            }
+        }
+
+        fn path(&self) -> &Path {
+            self.dir.path()
+        }
+
+        fn add_pair(&self, stem: &str, reference: &str) -> PathBuf {
+            let wav = self.dir.path().join(format!("{stem}.wav"));
+            let txt = self.dir.path().join(format!("{stem}.txt"));
+            fs::write(&wav, b"").unwrap();
+            fs::write(&txt, reference).unwrap();
+            txt
+        }
+
+        fn sorted_names(dir: &Path) -> Vec<RecordingName> {
+            let mut names: Vec<_> = fs::read_dir(dir)
+                .unwrap()
+                .map(|entry| RecordingName::from_path(&entry.unwrap().path()))
+                .collect();
+            names.sort();
+            names
         }
     }
 
-    impl Drop for TempFolder {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
+    struct StubRunner {
+        fail_file: Option<String>,
+        fail_error: String,
+        race_create: Option<PathBuf>,
+    }
+
+    impl Default for StubRunner {
+        fn default() -> Self {
+            Self {
+                fail_file: None,
+                fail_error: "corrupt wav".into(),
+                race_create: None,
+            }
+        }
+    }
+
+    impl SampleRunner<WavPair> for StubRunner {
+        fn run_sample(&mut self, pair: &WavPair) -> Result<TranscribedSample, String> {
+            if let Some(race) = &self.race_create {
+                fs::write(race, "created concurrently").unwrap();
+            }
+            if let Some(fail) = &self.fail_file
+                && pair.wav.ends_with(fail)
+            {
+                return Err(self.fail_error.clone());
+            }
+            let expected = fs::read_to_string(&pair.text).unwrap();
+            let raw = expected.clone();
+            let cleaned = expected.clone();
+            Ok(TranscribedSample {
+                duration_secs: 5.0,
+                expected,
+                transcript: Transcript { raw, cleaned },
+                wait: Duration::from_millis(25),
+            })
         }
     }
 
     #[test]
-    fn pairs_only_matching_files_in_name_order_without_recursing() {
-        let folder = TempFolder::new();
-        fs::create_dir(folder.0.join("sub")).unwrap();
-        fs::create_dir(folder.0.join("directory.wav")).unwrap();
-        for name in [
-            "b.wav",
-            "b.txt",
-            "a.wav",
-            "a.txt",
-            "c.wav",
-            "d.txt",
-            "sub/e.wav",
-            "sub/e.txt",
-            "upper.WAV",
-            "upper.txt",
-        ] {
-            fs::write(folder.0.join(name), "").unwrap();
-        }
-        let (paired, skipped) = pairs(&folder.0).unwrap();
-        assert_eq!(
-            paired,
-            vec![
-                (folder.0.join("a.wav"), folder.0.join("a.txt")),
-                (folder.0.join("b.wav"), folder.0.join("b.txt")),
-            ]
+    fn folder_dump_publishes_only_when_complete_and_aborts_on_errors() {
+        // Empty folder fails.
+        let empty = TempDir::new().unwrap();
+        assert!(Harness::run_folder(empty.path(), empty.path(), None).is_err());
+
+        let corpus = FakeCorpus::new();
+        let original = "Original reference transcript.\n";
+        let reference = corpus.add_pair("good", original);
+        corpus.add_pair("bad", "Second.");
+        let out_dir = TempDir::new().unwrap();
+
+        // Startup failure cleans up staging file and never publishes.
+        let bad_models = TempDir::new().unwrap();
+        let llm_dir = bad_models.path().join("qwen-0.6b");
+        fs::create_dir(&llm_dir).unwrap();
+        fs::write(llm_dir.join("model.gguf"), b"invalid-gguf").unwrap();
+        let startup_dump = out_dir.path().join("startup.json");
+        assert!(
+            Harness::run_folder(corpus.path(), bad_models.path(), Some(&startup_dump)).is_err()
         );
-        assert_eq!(skipped, vec![folder.0.join("c.wav")]);
+        assert!(!startup_dump.exists());
+
+        // Invalid destination paths fail before startup without modifying existing files.
+        let missing_parent = corpus.path().join("missing-dir/raw.json");
+        let file_as_parent = reference.join("raw.json");
+        let trailing_slash = PathBuf::from(format!("{}/", corpus.path().join("raw.json").display()));
+        let trailing_dot = PathBuf::from(format!("{}/.", corpus.path().join("raw.json").display()));
+        for bad_dest in [
+            &missing_parent,
+            &file_as_parent,
+            &trailing_slash,
+            &trailing_dot,
+            &reference,
+        ] {
+            assert!(
+                FolderPlan::prepare(corpus.path(), Some(bad_dest)).is_err(),
+                "{}",
+                bad_dest.display()
+            );
+            assert!(
+                Harness::run_folder(corpus.path(), bad_models.path(), Some(bad_dest)).is_err(),
+                "{}",
+                bad_dest.display()
+            );
+        }
+        assert_eq!(fs::read_to_string(&reference).unwrap(), original);
+
+        // Pair failure or cleanup error aborts publication and leaves no staging files behind.
+        for (file, fail_error) in [
+            ("incomplete.json", "corrupt wav"),
+            (
+                "strict.json",
+                "stop failed: LLM inference failed: runtime error",
+            ),
+        ] {
+            let dest = out_dir.path().join(file);
+            let plan = FolderPlan::prepare(corpus.path(), Some(&dest)).unwrap();
+            let mut runner = StubRunner {
+                fail_file: Some("bad.wav".into()),
+                fail_error: fail_error.into(),
+                ..StubRunner::default()
+            };
+            assert_eq!(plan.execute(&mut runner), ExitCode::FAILURE);
+            assert!(!dest.exists());
+        }
+        assert_eq!(
+            FakeCorpus::sorted_names(out_dir.path()),
+            Vec::<RecordingName>::new()
+        );
+
+        // Concurrent destination creation fails publish without clobbering.
+        let raced = out_dir.path().join("raced.json");
+        let plan = FolderPlan::prepare(corpus.path(), Some(&raced)).unwrap();
+        let mut race_runner = StubRunner {
+            race_create: Some(raced.clone()),
+            ..StubRunner::default()
+        };
+        assert_eq!(plan.execute(&mut race_runner), ExitCode::FAILURE);
+        assert_eq!(fs::read_to_string(&raced).unwrap(), "created concurrently");
+
+        // All pairs succeeding publishes the complete sorted dump.
+        let complete_dump = out_dir.path().join("complete.json");
+        let plan = FolderPlan::prepare(corpus.path(), Some(&complete_dump)).unwrap();
+        let mut ok_runner = StubRunner::default();
+        assert_eq!(plan.execute(&mut ok_runner), ExitCode::SUCCESS);
+        let dump = RawDump::read(&complete_dump).unwrap();
+        let names: Vec<_> = dump.entries().iter().map(|e| e.file.as_str()).collect();
+        assert_eq!(names, vec!["bad.wav", "good.wav"]);
     }
 
+    #[cfg(unix)]
     #[test]
-    fn empty_folder_and_unreadable_folder() {
-        let folder = TempFolder::new();
-        assert_eq!(pairs(&folder.0).unwrap(), (vec![], vec![]));
-        assert!(pairs(&folder.0.join("missing")).is_err());
-        assert_eq!(run(&folder.0, &folder.0), ExitCode::FAILURE);
+    fn comma_and_newline_filenames_round_trip_through_dump_and_replay() {
+        let corpus = FakeCorpus::new();
+        let out_dir = TempDir::new().unwrap();
+        let dump_path = out_dir.path().join("raw.json");
+
+        corpus.add_pair("a.wav, b", "Comma.");
+        corpus.add_pair("line1\nline2", "Multiline.");
+        fs::write(corpus.path().join("skip\nme, too.wav"), b"").unwrap();
+
+        let plan = FolderPlan::prepare(corpus.path(), Some(&dump_path)).unwrap();
+        let mut runner = StubRunner::default();
+        assert_eq!(plan.execute(&mut runner), ExitCode::SUCCESS);
+
+        let dump = RawDump::read(&dump_path).unwrap();
+        let names: Vec<_> = dump.entries().iter().map(|e| e.file.as_str()).collect();
+        assert_eq!(names, vec!["a.wav, b.wav", "line1\nline2.wav"]);
+        assert_eq!(
+            ReplayHarness::run(&dump_path, out_dir.path()),
+            Ok(ExitCode::SUCCESS)
+        );
     }
 }

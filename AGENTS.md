@@ -4,7 +4,7 @@ Local voice dictation: speech is transcribed and cleaned up on your machine, nev
 
 ## Truth Model
 
-**`docs/design.json`** is the architecture board (understudy format, rev 230).
+**`docs/design.json`** is the architecture board (understudy format, rev 231).
 It is the single source of truth for:
 - Part responsibilities, operations, state, and failures
 - Connections between parts
@@ -47,19 +47,28 @@ src-tauri/core/src/     Tauri-free transcription pipeline
   lib.rs                Public core API
   audio_source.rs       AudioSource contract (board: audio-source)
   transcriber.rs        Orchestrator (board: module-1)
+  stt_worker.rs         STT worker loop (board: module-1)
   recording.rs          WAV writer for saved recordings (board: module-1)
   audio_device.rs       cpal capture (board: module-2)
   stt.rs                STT trait (board: contract-1)
   parakeet_stt.rs       Parakeet via sherpa-onnx (board: module-3)
   raw_transcript.rs     Transcript accumulator (board: module-4)
   llm_postprocessor.rs  mistral.rs cleanup (board: module-5)
+  llm_backend.rs        LLM inference backend and completion validation (board: module-5)
+  gguf_path.rs          Local GGUF path resolution (board: module-5)
   text_format.rs        Rule-based filler and list formatting around the LLM (board: module-5)
   conventions.rs        Numbers, percentages and file extensions as written (board: module-5)
+  text_cleaner.rs       Public text-only cleanup facade (board: text-cleaner)
 src-tauri/cli/src/      WAV transcription CLI
   main.rs               Argument parsing and pipeline lifecycle (board: cli)
   file_source.rs        Real-time WAV source (board: file-source)
-  harness.rs            Folder transcript comparison (board: cli)
-  score.rs              Tokenization and token-level edit distance, split by kind (board: cli)
+  corpus.rs             Folder WAV/TXT discovery and WAV transcription runner (board: cli)
+  harness.rs            Shared harness state and folder transcript comparison (board: cli)
+  replay.rs             Fast text-only JSON replay runner (board: cli)
+  dump.rs               Raw-transcript JSON staging and reading (board: cli)
+  report.rs             Per-file, overall, >60 s, and worse-list reporting (board: cli)
+  score.rs              Exact tokenization and edit distance, split by kind (board: cli)
+  content_score.rs      Normalized content WER tokenization and scoring (board: cli)
 src-tauri/models/       Bundled ML models
 docs/design.json        Architecture board (truth model)
 docs/PLAN.md            Implementation plan

@@ -7343,7 +7343,10 @@ dependencies = [
  "hound",
  "log",
  "rtrb",
+ "serde",
+ "serde_json",
  "talksify-core",
+ "tempfile",
 ]
 
 [[package]]
@@ -7357,6 +7360,7 @@ dependencies = [
  "rtrb",
  "rubato",
  "sherpa-onnx",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
 ]
