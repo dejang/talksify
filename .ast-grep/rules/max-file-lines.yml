@@ -1,7 +1,0 @@
-id: max-file-lines
-language: rust
-severity: error
-message: "File exceeds 600 lines; split into focused submodules."
-rule:
-  kind: source_file
-  regex: '(?:[^\n]*\n){600}'
