@@ -8,6 +8,25 @@ MODELS_DIR="$ROOT_DIR/src-tauri/models"
 
 mkdir -p "$MODELS_DIR/stt" "$MODELS_DIR/qwen-0.6b"
 
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256_file() { sha256sum "$1" | awk '{print $1}'; }
+elif command -v shasum >/dev/null 2>&1; then
+  sha256_file() { shasum -a 256 "$1" | awk '{print $1}'; }
+else
+  echo "Error: neither sha256sum nor shasum is installed; cannot verify model checksums." >&2
+  exit 1
+fi
+
+LLM_TMP=""
+cleanup_llm_tmp() {
+  if [ -n "$LLM_TMP" ] && [ -f "$LLM_TMP" ]; then
+    rm -f "$LLM_TMP"
+  fi
+}
+trap cleanup_llm_tmp EXIT
+trap 'cleanup_llm_tmp; exit 130' INT
+trap 'cleanup_llm_tmp; exit 143' TERM
+
 # Nvidia Parakeet TDT 0.6B v3, 25 European languages (int8, ~490MB). The decoder size check
 # replaces an older v2 model.
 STT_NAME="sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
@@ -30,14 +49,29 @@ else
   echo "STT model already present."
 fi
 
-# Talksify fine-tuned Qwen3.5-0.8B GGUF (Epoch 1, Q6_K, ~601MB, text only, 25 European languages).
-# The size check replaces an older model.gguf.
-LLM_URL="https://huggingface.co/garret2k2/talksify-qwen35-0.8b-gguf/resolve/main/talksify-qwen35-0.8b-Q6_K.gguf"
+# Talksify fine-tuned Qwen3.5-0.8B GGUF (Epoch 2 (best_adapter), Q6_K, ~601 MB, text only, 25 European languages).
+# Verify by SHA-256 because Epoch 1 and Epoch 2 Q6_K have the exact same byte size.
+LLM_URL="https://huggingface.co/garret2k2/talksify-qwen35-0.8b-gguf/resolve/main/talksify-qwen35-0.8b-epoch2-Q6_K.gguf"
 LLM_FILE="$MODELS_DIR/qwen-0.6b/model.gguf"
-LLM_SIZE=629743712
-if [ ! -f "$LLM_FILE" ] || [ "$(wc -c < "$LLM_FILE" | tr -d ' ')" != "$LLM_SIZE" ]; then
+LLM_SHA256="6b6beff4b254565030aeddb525ce61a3999887838e671d1fa0b6d8ebef5094ae"
+LLM_CURRENT_SHA256=""
+if [ -f "$LLM_FILE" ]; then
+  LLM_CURRENT_SHA256="$(sha256_file "$LLM_FILE")"
+fi
+if [ "$LLM_CURRENT_SHA256" != "$LLM_SHA256" ]; then
   echo "Downloading LLM model..."
-  curl -L -o "$LLM_FILE" "$LLM_URL"
+  LLM_TMP="$(mktemp "$MODELS_DIR/qwen-0.6b/model.gguf.tmp.XXXXXX")"
+  curl -fL -o "$LLM_TMP" "$LLM_URL"
+  DOWNLOADED_SHA256="$(sha256_file "$LLM_TMP")"
+  if [ "$DOWNLOADED_SHA256" != "$LLM_SHA256" ]; then
+    echo "Error: SHA-256 mismatch for downloaded LLM model." >&2
+    echo "  expected: $LLM_SHA256" >&2
+    echo "  actual:   $DOWNLOADED_SHA256" >&2
+    exit 1
+  fi
+  chmod 644 "$LLM_TMP"
+  mv -f "$LLM_TMP" "$LLM_FILE"
+  LLM_TMP=""
   echo "LLM model ready."
 else
   echo "LLM model already present."
