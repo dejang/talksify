@@ -110,28 +110,28 @@ Validation cross-entropy loss is logged at epoch 0 (pre-train baseline) and afte
 
 ### 3. Merge LoRA & Export Published `< 1 GB` GGUFs (`--no-mtp`)
 
-Both **Epoch 1** (`checkpoint-epoch-1`, default shipped via `scripts/download-models.sh`) and **Epoch 2** (`best_adapter` / `checkpoint-epoch-2`, lowest validation loss, published for A/B testing) are exported in **`Q6_K`** quantization and hosted on Hugging Face at [`garret2k2/talksify-qwen35-0.8b-gguf`](https://huggingface.co/garret2k2/talksify-qwen35-0.8b-gguf):
+Both **Epoch 2** (`best_adapter` / `checkpoint-epoch-2`, lowest validation loss, default shipped via `scripts/download-models.sh`) and **Epoch 1** (`checkpoint-epoch-1`, published conservative reference checkpoint) are exported in **`Q6_K`** quantization and hosted on Hugging Face at [`garret2k2/talksify-qwen35-0.8b-gguf`](https://huggingface.co/garret2k2/talksify-qwen35-0.8b-gguf):
 
 ```bash
 cd training
 
-# Export Epoch 1 Q6_K (default shipped model fetched by scripts/download-models.sh)
-uv run python export_gguf.py \
-  --adapter-dir .artifacts/lora_qwen35_08b/checkpoint-epoch-1 \
-  --output-dir .artifacts/export_epoch1 \
-  --quants Q6_K
-
-# Export Epoch 2 Q6_K (best_adapter / checkpoint-epoch-2, published for A/B testing)
+# Export Epoch 2 Q6_K (best_adapter / checkpoint-epoch-2, default shipped model fetched by scripts/download-models.sh)
 uv run python export_gguf.py \
   --adapter-dir .artifacts/lora_qwen35_08b/best_adapter \
   --output-dir .artifacts/export_qwen35_08b \
+  --quants Q6_K
+
+# Export Epoch 1 Q6_K (published conservative reference checkpoint)
+uv run python export_gguf.py \
+  --adapter-dir .artifacts/lora_qwen35_08b/checkpoint-epoch-1 \
+  --output-dir .artifacts/export_epoch1 \
   --quants Q6_K
 ```
 
 | Published HF File (`garret2k2/talksify-qwen35-0.8b-gguf`) | Checkpoint / Local Artifact | Size & Layout | SHA-256 |
 | --- | --- | --- | --- |
-| [`talksify-qwen35-0.8b-Q6_K.gguf`](https://huggingface.co/garret2k2/talksify-qwen35-0.8b-gguf/resolve/main/talksify-qwen35-0.8b-Q6_K.gguf) *(default in `scripts/download-models.sh`)* | `checkpoint-epoch-1` -> `.artifacts/export_epoch1/talksify-qwen35-0.8b-Q6_K.gguf` | `629,743,712` bytes (`600.57 MB`, `< 1 GB`), `320` unfused tensors (`--no-mtp`) | `df21112849d9651b7b8bf9fc9d3c4fdd2e5bdf3b8bc09b1cd2ae312cb0e78d9b` |
-| [`talksify-qwen35-0.8b-epoch2-Q6_K.gguf`](https://huggingface.co/garret2k2/talksify-qwen35-0.8b-gguf/resolve/main/talksify-qwen35-0.8b-epoch2-Q6_K.gguf) *(A/B candidate)* | `best_adapter` (`checkpoint-epoch-2`) -> `.artifacts/export_qwen35_08b/talksify-qwen35-0.8b-Q6_K.gguf` | `629,743,712` bytes (`600.57 MB`, `< 1 GB`), `320` unfused tensors (`--no-mtp`) | `6b6beff4b254565030aeddb525ce61a3999887838e671d1fa0b6d8ebef5094ae` |
+| [`talksify-qwen35-0.8b-epoch2-Q6_K.gguf`](https://huggingface.co/garret2k2/talksify-qwen35-0.8b-gguf/resolve/main/talksify-qwen35-0.8b-epoch2-Q6_K.gguf) *(default in `scripts/download-models.sh`)* | `best_adapter` (`checkpoint-epoch-2`) -> `.artifacts/export_qwen35_08b/talksify-qwen35-0.8b-Q6_K.gguf` | `629,743,712` bytes (`600.57 MB`, `< 1 GB`), `320` unfused tensors (`--no-mtp`) | `6b6beff4b254565030aeddb525ce61a3999887838e671d1fa0b6d8ebef5094ae` |
+| [`talksify-qwen35-0.8b-Q6_K.gguf`](https://huggingface.co/garret2k2/talksify-qwen35-0.8b-gguf/resolve/main/talksify-qwen35-0.8b-Q6_K.gguf) *(conservative reference checkpoint)* | `checkpoint-epoch-1` -> `.artifacts/export_epoch1/talksify-qwen35-0.8b-Q6_K.gguf` | `629,743,712` bytes (`600.57 MB`, `< 1 GB`), `320` unfused tensors (`--no-mtp`) | `df21112849d9651b7b8bf9fc9d3c4fdd2e5bdf3b8bc09b1cd2ae312cb0e78d9b` |
 
 `export_gguf.py` merges the LoRA weights into `Qwen/Qwen3.5-0.8B` in `bf16`, checks out pinned `llama.cpp` commit `19bc41dbb41e858eebc269b49ccdec1f0d28880c` and builds `llama-quantize` from that pinned checkout if needed, converts via `convert_hf_to_gguf.py --no-mtp` (disabling `Qwen3_5TextModel._SHARED_INPUT_MERGES` in-process so `mistralrs` receives the exact unfused 320-tensor `attn_qkv`/`attn_gate`/`ssm_beta`/`ssm_alpha` layout), verifies `< 1 GB` file sizes and zero MTP/vision tensors, computes SHA-256 checksums, and runs an isolated `talksify-cli --replay` smoke verification. Pass `--quants Q6_K Q8_0` to also export `Q8_0` checkpoints for comparison.
 
@@ -144,9 +144,9 @@ Stage each candidate GGUF in an isolated model directory while benchmarking:
 cargo run --manifest-path src-tauri/Cargo.toml -p talksify-cli -- \
   /home/agent/recordings --dump-raw training/.artifacts/raw_recordings.json
 
-# Stage candidate GGUF
+# Stage candidate GGUF (Epoch 2 best_adapter default)
 mkdir -p training/.artifacts/eval_q6k/qwen-0.6b
-ln -sf "$(realpath training/.artifacts/export_epoch1/talksify-qwen35-0.8b-Q6_K.gguf)" \
+ln -sf "$(realpath training/.artifacts/export_qwen35_08b/talksify-qwen35-0.8b-Q6_K.gguf)" \
   training/.artifacts/eval_q6k/qwen-0.6b/model.gguf
 
 # 1. Fast replay across all 20 recordings
@@ -164,7 +164,7 @@ LLM_EVAL_MODELS="$(realpath training/.artifacts/eval_q6k)" \
 
 # 4. Tier 2 multilingual spot-check (nl, pl, pt, cs, sv, el, uk)
 cd training && uv run python eval_multilingual.py \
-  --gguf .artifacts/export_epoch1/talksify-qwen35-0.8b-Q6_K.gguf
+  --gguf .artifacts/export_qwen35_08b/talksify-qwen35-0.8b-Q6_K.gguf
 ```
 
 ## Apple Silicon Local Runs (MPS & MLX)
