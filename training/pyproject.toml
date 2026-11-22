@@ -1,0 +1,36 @@
+[project]
+name = "talksify-training"
+version = "0.1.0"
+description = "Multilingual Qwen3.5-0.8B dictation-cleanup LoRA fine-tuning and GGUF export pipeline for Talksify"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "accelerate>=1.10.0",
+    "datasets>=4.0.0",
+    "flash-linear-attention>=0.4.0 ; sys_platform == 'linux'",
+    "gguf>=0.17.0",
+    "huggingface-hub>=0.34.0",
+    "kernels>=0.18.2,<0.19.0",
+    "lingua-language-detector>=2.1.0",
+    "numpy>=2.0.0",
+    "peft>=0.17.0",
+    "protobuf>=5.29.0",
+    "pyarrow>=18.0.0",
+    "safetensors>=0.5.0",
+    "sentencepiece>=0.2.0",
+    "torch>=2.6.0",
+    "tqdm>=4.67.0",
+    "transformers>=5.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+]
+mlx = [
+    "mlx-lm>=0.24.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

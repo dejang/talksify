@@ -30,10 +30,11 @@ else
   echo "STT model already present."
 fi
 
-# Qwen3.5-0.8B GGUF (Q6_K, ~640MB, text only). The size check replaces an older model.gguf.
-LLM_URL="https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q6_K.gguf"
+# Talksify fine-tuned Qwen3.5-0.8B GGUF (Epoch 1, Q6_K, ~601MB, text only, 25 European languages).
+# The size check replaces an older model.gguf.
+LLM_URL="https://huggingface.co/garret2k2/talksify-qwen35-0.8b-gguf/resolve/main/talksify-qwen35-0.8b-Q6_K.gguf"
 LLM_FILE="$MODELS_DIR/qwen-0.6b/model.gguf"
-LLM_SIZE=639029504
+LLM_SIZE=629743712
 if [ ! -f "$LLM_FILE" ] || [ "$(wc -c < "$LLM_FILE" | tr -d ' ')" != "$LLM_SIZE" ]; then
   echo "Downloading LLM model..."
   curl -L -o "$LLM_FILE" "$LLM_URL"

@@ -70,6 +70,7 @@ src-tauri/cli/src/      WAV transcription CLI
   score.rs              Exact tokenization and edit distance, split by kind (board: cli)
   content_score.rs      Normalized content WER tokenization and scoring (board: cli)
 src-tauri/models/       Bundled ML models
+training/               Python/uv multilingual Qwen3.5-0.8B LoRA fine-tuning & GGUF export pipeline
 docs/design.json        Architecture board (truth model)
 docs/PLAN.md            Implementation plan
 .ast-grep/              Lint rules

@@ -10,3 +10,11 @@ src-tauri/gen
 src-tauri/models/stt/*.onnx
 src-tauri/models/qwen-0.6b/*.gguf
 src-tauri/models/vad/*.onnx
+
+# Fine-tuning artifacts, datasets, checkpoints, and Python virtualenvs
+training/.artifacts/
+training/.venv/
+training/.cache/
+training/**/__pycache__/
+training/.pytest_cache/
+*.gguf
